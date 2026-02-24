@@ -57,17 +57,6 @@ if (!PLATFORM_USER || !PLATFORM_PASS) {
   console.log("⚠️ PLATFORM_USER / PLATFORM_PASS no definidos. Se usará FIXED_API_TOKEN si existe.");
 }
 
-// INBOX ROUTING
-const INBOX_CARGAS_ID = 96187;
-const INBOX_REEMBOLSOS_ID = 96190;
-const INBOX_SOPORTE_ID = 96191;
-
-// CARGAS CONFIG
-const CARGAS_TEAM_PREFIX = 'girox';
-const CARGAS_DEFAULT_PASSWORD = 'asd123';
-const CARGAS_CBU_ACTIVO = '15948940000542815';
-const CARGAS_PASSWORD_CURRENT = process.env.CARGAS_PASSWORD_CURRENT || 'default';
-
 const openai = new OpenAIApi(new Configuration({ apiKey: OPENAI_API_KEY }));
 
 let GOOGLE_CREDENTIALS = null;
@@ -104,6 +93,7 @@ setInterval(() => {
 }, 60 * 60 * 1000);
 
 // ================== CLIENTE HTTP ==================
+
 function toFormUrlEncoded(data) {
   return Object.keys(data).map(key => {
     return encodeURIComponent(key) + '=' + encodeURIComponent(data[key]);
@@ -388,6 +378,7 @@ async function getUserInfoByName(targetUsername) {
         let balanceRaw = found.user_balance ?? found.balance ?? found.balance_amount ?? found.available_balance ?? 0;
         balanceRaw = Number(balanceRaw || 0);
 
+        // Corrección: si viene como entero, se interpreta como centavos
         let balancePesos = balanceRaw;
         if (Number.isInteger(balanceRaw)) {
           balancePesos = balanceRaw / 100;
@@ -573,37 +564,6 @@ async function creditUserBalance(username, amount) {
   }
 }
 
-// ================== CAMBIO PASSWORD ==================
-async function changeUserPassword(childId, newPassword) {
-  const ok = await ensureSession();
-  if (!ok) return { success: false, error: 'No hay sesión válida' };
-
-  try {
-    const body = toFormUrlEncoded({
-      action: 'ChangePassword',
-      token: SESSION_TOKEN,
-      password: CARGAS_PASSWORD_CURRENT,
-      newpassword: newPassword,
-      childid: childId
-    });
-
-    const headers2 = {};
-    if (SESSION_COOKIE) headers2['Cookie'] = SESSION_COOKIE;
-
-    const resp = await client.post('', body, { headers: headers2 });
-
-    let data = resp.data;
-    if (typeof data === 'string') {
-      try { data = JSON.parse(data.substring(data.indexOf('{'), data.lastIndexOf('}') + 1)); } catch (e) {}
-    }
-
-    if (data?.success) return { success: true };
-    return { success: false, error: data?.error || 'API Error' };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
-}
-
 // ================== CHATWOOT ==================
 async function sendReplyToChatwoot(accountId, conversationId, message) {
   if (!CHATWOOT_ACCESS_TOKEN) return;
@@ -694,129 +654,6 @@ function extractUsername(message) {
   return null;
 }
 
-// ================== CARGAS HELPERS ==================
-function normalizeNameForUsername(name) {
-  return (name || '')
-    .toString()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-zA-Z ]/g, '')
-    .toLowerCase()
-    .trim();
-}
-
-function isLikelyName(text) {
-  const clean = normalizeNameForUsername(text);
-  return clean.length >= 3 && clean.length <= 20;
-}
-
-function isGreetingOnly(text) {
-  const m = normalizeIntentText(text);
-  return (
-    m === 'hola' ||
-    m === 'buenas' ||
-    m === 'hola buenas' ||
-    m === 'buen dia' ||
-    m === 'buenos dias' ||
-    m === 'buenas tardes' ||
-    m === 'buenas noches'
-  );
-}
-
-function extractNameCandidate(message, awaitingName) {
-  const raw = (message || '').toString().trim();
-
-  const introMatch = /(me llamo|mi nombre es|soy)\s+([a-zA-ZáéíóúÁÉÍÓÚñÑ ]{3,})/i.exec(raw);
-  if (introMatch?.[2]) return introMatch[2];
-
-  if (awaitingName && !isGreetingOnly(raw) && isLikelyName(raw)) {
-    return raw;
-  }
-
-  return null;
-}
-
-function buildGiroxUsername(rawName) {
-  const base = normalizeNameForUsername(rawName).replace(/\s+/g, '');
-  const rand = Math.floor(100 + Math.random() * 900);
-  return `${CARGAS_TEAM_PREFIX}${base}${rand}`;
-}
-
-function isLoadIntent(message) {
-  const m = normalizeIntentText(message);
-  return (
-    m.includes('cargar') ||
-    m.includes('carga') ||
-    m.includes('deposit') ||
-    m.includes('recargar') ||
-    m.includes('saldo') ||
-    m.includes('transfer') ||
-    m.includes('cbu')
-  );
-}
-
-function isInfoIntent(message) {
-  const m = normalizeIntentText(message);
-  return m.includes('info') || m.includes('informacion') || m.includes('link') || m.includes('pagina') || m.includes('web');
-}
-
-function isPasswordChangeIntent(message) {
-  const m = normalizeIntentText(message);
-  return (
-    m.includes('cambiar contraseña') ||
-    m.includes('cambiar contrasena') ||
-    m.includes('cambiar clave') ||
-    m.includes('resetear contraseña') ||
-    m.includes('resetear clave') ||
-    m.includes('nueva contraseña') ||
-    m.includes('nueva clave')
-  );
-}
-
-function extractNewPassword(message) {
-  const raw = (message || '').toString();
-
-  const match1 = /(?:contrase(?:ñ|n)a|clave|password)\s*(?:nueva|es|:|=)?\s*([A-Za-z0-9._-]{4,})/i.exec(raw);
-  if (match1?.[1]) return match1[1];
-
-  const match2 = /cambiar.*a\s+([A-Za-z0-9._-]{4,})/i.exec(raw);
-  if (match2?.[1]) return match2[1];
-
-  return null;
-}
-
-async function createUser(username) {
-  const ok = await ensureSession();
-  if (!ok) return { success: false, error: 'No hay sesión válida' };
-
-  try {
-    const body = toFormUrlEncoded({
-      action: 'CREATEUSER',
-      token: SESSION_TOKEN,
-      username,
-      password: CARGAS_DEFAULT_PASSWORD,
-      userrole: 'player',
-      currency: PLATFORM_CURRENCY
-    });
-
-    const headers2 = {};
-    if (SESSION_COOKIE) headers2['Cookie'] = SESSION_COOKIE;
-
-    const resp = await client.post('', body, { headers: headers2 });
-
-    let data = resp.data;
-    if (typeof data === 'string') {
-      try { data = JSON.parse(data.substring(data.indexOf('{'), data.lastIndexOf('}') + 1)); } catch (e) {}
-    }
-
-    if (data?.success) return { success: true, user: data.user };
-    return { success: false, error: data?.error || 'API Error' };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
-}
-
-// ================== INTENTS (REEMBOLSOS) ==================
 function isNameQuestion(message) {
   const m = normalizeIntentText(message);
   return (
@@ -997,109 +834,92 @@ function isWrongUsernameMessage(message) {
   );
 }
 
-// ================== CARGAS FLOW ==================
-async function processCargas(accountId, conversationId, contactId, contactName, fullMessage) {
-  console.log(`📥 [CARGAS] Msg: "${fullMessage}" | Contact: "${contactName}"`);
+async function generateCasualChat(message, conversationId, context = {}) {
+  try {
+    await applyTypingDelay(message, conversationId);
+    const greeted = context.greeted ? 'si' : 'no';
+    const lastReason = context.lastReason || 'none';
+    const resp = await openai.createChatCompletion({
+      model: 'gpt-4o-mini',
+      temperature: 0.4,
+      messages: [
+        {
+          role: 'system',
+          content: `Sos Camila, agente real de jugaygana (Argentina), atención 24 hs. Nunca digas que sos IA ni bot. Respuestas breves, humanas, con algun error de tipeo leve y natural. Si greeted=si, NO saludes ni te presentes de nuevo. Si el cliente pide explicación, respondé con el motivo usando last_reason (balance_limit, no_balance, claimed, user_not_found). Si falta el usuario para acreditar, pedilo. Si no recuerda su usuario, indicá que consulte al WhatsApp principal de su equipo. Reintegro: siempre por el día de ayer (00:00-23:59 AR). Cálculo: neto = depósitos - retiros, y el reintegro es 8% del neto si el neto es mayor a $1. Si el saldo actual supera $1000, no se acredita reintegro (debe tener menos de $1000). Solo trabajamos con ${PLATFORM_URL}. Si no podés ayudar, pedí que consulten al WhatsApp principal. Link: ${PLATFORM_URL}. Contexto: greeted=${greeted}, last_reason=${lastReason}.`
+        },
+        { role: 'user', content: message },
+      ],
+    });
+    return resp.data?.choices?.[0]?.message?.content;
+  } catch (err) {
+    await applyTypingDelay(message, conversationId);
+    return FALLBACK_HELP_MESSAGE;
+  }
+}
 
-  const state = userStates.get(conversationId) || {};
-  const cargasState = state.cargas || { awaitingName: false };
-  state.lastActivity = Date.now();
-
-  const saveState = () => {
-    state.cargas = cargasState;
-    userStates.set(conversationId, state);
-  };
-
-  let existingUsername = null;
-  if (isValidUsername(contactName)) {
-    existingUsername = normalizeUsernameValue(contactName);
+async function generateCheckResult(username, status, data = {}, conversationId) {
+  if (status === 'success') {
+    const bonusText = Number(data.bonus || 0).toFixed(2);
+    const successMessage = `¡Hola ${username}! Tu reembolso del día de ayer te lo acabamos de cargar en tu cuenta, tu reembolso es de $${bonusText}! Ya lo podés ver en la plataforma ${PLATFORM_URL}! Cualquier cosa, estoy por acá. ¡Suerte!`;
+    await applyTypingDelay(successMessage, conversationId);
+    return successMessage;
   }
 
-  const usernameFromMsg = extractUsername(fullMessage);
-
-  if (isPasswordChangeIntent(fullMessage)) {
-    const newPassword = extractNewPassword(fullMessage);
-    const targetUsername = existingUsername || usernameFromMsg;
-
-    if (!targetUsername) {
-      await sendReplyToChatwoot(accountId, conversationId, 'Para cambiar la contraseña, decime tu usuario.');
-      return;
-    }
-
-    if (!newPassword) {
-      await sendReplyToChatwoot(accountId, conversationId, 'Decime la nueva contraseña que querés.');
-      return;
-    }
-
-    const userInfo = await getUserInfoByName(targetUsername);
-    if (!userInfo) {
-      await sendReplyToChatwoot(accountId, conversationId, 'No encuentro ese usuario. Revisalo y pasamelo bien.');
-      return;
-    }
-
-    const changeRes = await changeUserPassword(userInfo.id, newPassword);
-    if (!changeRes.success) {
-      await sendReplyToChatwoot(accountId, conversationId, 'No pude cambiar la contraseña ahora. Probá en un rato.');
-      return;
-    }
-
-    await sendReplyToChatwoot(accountId, conversationId, `Listo! Tu contraseña quedó cambiada. Nueva contraseña: ${newPassword}`);
-    return;
+  if (status === 'negative_net') {
+    const msg = `${username}, hoy no corresponde reintegro porque ayer retiraste más de lo que depositaste, así que el total quedó negativo. Podés volver mañana y consultar de nuevo. Si tenés alguna duda, estoy acá para ayudarte. ¡Saludos!`;
+    await applyTypingDelay(msg, conversationId);
+    return msg;
   }
 
-  if (isInfoIntent(fullMessage)) {
-    await sendReplyToChatwoot(accountId, conversationId, `Link de la plataforma: ${PLATFORM_URL}`);
-    return;
+  if (status === 'no_deposits') {
+    const msg = `${username}, hoy no corresponde reintegro porque no hubo ninguna carga el día de ayer, y el reembolso es específicamente sobre el día de ayer. Podés volver mañana y consultar de nuevo. Si tenés alguna duda, estoy acá para ayudarte. ¡Saludos!`;
+    await applyTypingDelay(msg, conversationId);
+    return msg;
   }
 
-  if (existingUsername) {
-    if (isLoadIntent(fullMessage)) {
-      await sendReplyToChatwoot(
-        accountId,
-        conversationId,
-        `Tu usuario ya está creado: ${existingUsername}. Para cargar, usá este CBU: ${CARGAS_CBU_ACTIVO}`
-      );
-    } else {
-      await sendReplyToChatwoot(
-        accountId,
-        conversationId,
-        `Tu usuario ya está creado: ${existingUsername}. Si querés cargar, pedímelo.`
-      );
-    }
-    return;
+  let systemPrompt = `Sos Camila, agente real de jugaygana. Usuario: "${username}". Respuesta breve, humana, con algun error de tipeo leve. Nunca digas que sos IA ni bot. Link: ${PLATFORM_URL}.`;
+  if (status === 'api_error') systemPrompt += ` No pude encontrar el usuario o hubo un error al consultarlo. Pedí que corrobore su usuario con el WhatsApp principal y que lo envíe bien para acreditar el reintegro.`;
+  else if (status === 'no_balance') systemPrompt += ` Hoy no corresponde reintegro porque ayer no hubo cargas/retiros o el neto no alcanzó. Podés volver mañana y consultar de nuevo.`;
+  else if (status === 'claimed') systemPrompt += ` Ya fue reclamado hoy.`;
+
+  const delaySeed = `${status} ${data?.bonus || ''}`;
+
+  try {
+    await applyTypingDelay(delaySeed, conversationId);
+    const resp = await openai.createChatCompletion({
+      model: 'gpt-4o-mini',
+      temperature: 0.4,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: "Generá respuesta." }
+      ],
+    });
+    return resp.data?.choices?.[0]?.message?.content;
+  } catch (err) {
+    await applyTypingDelay(delaySeed, conversationId);
+    return 'No se pudo procesar, probá más tarde.';
   }
+}
 
-  const nameCandidate = extractNameCandidate(fullMessage, cargasState.awaitingName);
-
-  if (nameCandidate) {
-    const newUsername = buildGiroxUsername(nameCandidate);
-    const createResult = await createUser(newUsername);
-
-    if (!createResult.success) {
-      await sendReplyToChatwoot(accountId, conversationId, 'Hubo un error al crear tu usuario, probá en un rato.');
-      return;
-    }
-
-    await updateChatwootContact(accountId, contactId, newUsername);
-
-    const reply = `Listo! Tu usuario es ${newUsername} y la contraseña es ${CARGAS_DEFAULT_PASSWORD}. Link: ${PLATFORM_URL}. Para cargar, usá este CBU: ${CARGAS_CBU_ACTIVO}`;
-    await sendReplyToChatwoot(accountId, conversationId, reply);
-
-    cargasState.awaitingName = false;
-    saveState();
-    return;
+async function generateAfterCare(message, username, conversationId) {
+  try {
+    await applyTypingDelay(message, conversationId);
+    const resp = await openai.createChatCompletion({
+      model: 'gpt-4o-mini',
+      temperature: 0.5,
+      messages: [
+        {
+          role: 'system',
+          content: `Sos Camila, agente real. El cliente "${username}" ya cobró hoy. Respuesta corta, humana y con algun typo leve. Nunca digas que sos IA ni bot.`
+        },
+        { role: 'user', content: message },
+      ],
+    });
+    return resp.data?.choices?.[0]?.message?.content;
+  } catch (err) {
+    await applyTypingDelay(message, conversationId);
+    return 'El reintegro ya quedó hoy. Mañana podés volver a pedirlo.';
   }
-
-  if (isLoadIntent(fullMessage) || isInfoIntent(fullMessage) || isGreetingOnly(fullMessage)) {
-    cargasState.awaitingName = true;
-    saveState();
-    await sendReplyToChatwoot(accountId, conversationId, 'Para crearte el usuario, pasame tu nombre.');
-    return;
-  }
-
-  cargasState.awaitingName = true;
-  saveState();
-  await sendReplyToChatwoot(accountId, conversationId, 'Para ayudarte con la carga, pasame tu nombre.');
 }
 
 // ================== UTILIDADES ==================
@@ -1135,7 +955,7 @@ function randomTempName() {
   return `temp-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-// ================== PROCESAMIENTO REEMBOLSOS ==================
+// ================== PROCESAMIENTO ==================
 async function processConversation(accountId, conversationId, contactId, contactName, fullMessage) {
   console.log(`🤖 Msg: "${fullMessage}" | Contact: "${contactName}"`);
 
@@ -1623,19 +1443,6 @@ async function processConversation(accountId, conversationId, contactId, contact
   markReplied();
 }
 
-// ================== ROUTER ==================
-async function routeByInbox(inboxId, accountId, conversationId, contactId, contactName, fullMessage) {
-  if (inboxId === INBOX_SOPORTE_ID) return;
-
-  if (inboxId === INBOX_CARGAS_ID) {
-    return await processCargas(accountId, conversationId, contactId, contactName, fullMessage);
-  }
-
-  if (inboxId === INBOX_REEMBOLSOS_ID) {
-    return await processConversation(accountId, conversationId, contactId, contactName, fullMessage);
-  }
-}
-
 // ================== WEBHOOK ==================
 app.post('/webhook-chatwoot', (req, res) => {
   res.status(200).send('OK');
@@ -1648,7 +1455,6 @@ app.post('/webhook-chatwoot', (req, res) => {
   const contactId = body.sender?.id;
   const contactName = body.sender?.name || '';
   const content = cleanHtml(body.content);
-  const inboxId = body.inbox?.id || body.conversation?.inbox_id;
 
   if (!conversationId || !content) return;
 
@@ -1667,7 +1473,7 @@ app.post('/webhook-chatwoot', (req, res) => {
     (async () => {
       try {
         console.log(`⏳ Procesando... (Conv ${conversationId})`);
-        await routeByInbox(inboxId, accountId, conversationId, contactId, contactName, fullText);
+        await processConversation(accountId, conversationId, contactId, contactName, fullText);
       } catch (err) {
         console.error('❌ Error en processConversation:', err?.message);
         await sendReplyToChatwoot(accountId, conversationId, FALLBACK_HELP_MESSAGE);
