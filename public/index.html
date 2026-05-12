@@ -1,0 +1,2929 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>VIPCARGAS | 24/7</title>
+    <!-- Ícono de ruleta como favicon SVG (issue #7) -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎰</text></svg>">
+    
+    <!-- PWA Meta Tags -->
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="VIPCARGAS">
+    <meta name="application-name" content="VIPCARGAS | 24/7">
+    <meta name="msapplication-TileColor" content="#00ff88">
+    <meta name="theme-color" content="#00ff88">
+    
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" type="image/png" sizes="32x32" href="icons/icon-32x32.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="icons/icon-180x180.png">
+    
+    <!-- Firebase SDK (self-hosted para evitar bloqueos de red/CDN/CSP) -->
+    <script src="/lib/firebase/9.1.2/firebase-app-compat.js"></script>
+    <script src="/lib/firebase/9.1.2/firebase-messaging-compat.js"></script>
+    <script>
+        // ============================================
+        // FIREBASE SDK LOADER ROBUSTO (RETRIES + CDN FALLBACK)
+        // ============================================
+        // Si los <script> de gstatic.com fallan (red móvil flaky, ISP que
+        // bloquea, paquete perdido, etc.) este loader:
+        //   1) Reintenta con backoff progresivo (1s, 2s, 5s, 10s, 20s, 30s).
+        //   2) Si gstatic falla, intenta CDNs alternativos (jsDelivr, unpkg).
+        //   3) Si agota todos los intentos NO rechaza la promesa: queda en
+        //      estado 'failed-retrying' y reactiva el ciclo cuando vuelve la
+        //      conexión (`online`) o la pestaña vuelve al frente
+        //      (`visibilitychange`). Así el sistema se auto-recupera siempre.
+        //   4) Expone:
+        //        - window.__firebaseReady (Promise que SÓLO resuelve, nunca
+        //          rechaza)
+        //        - window.__firebaseLoadState ('loading'|'ready'|'failed-retrying')
+        //        - window.__firebaseRetryNow() para forzar un reintento desde la UI.
+        (function () {
+            var FIREBASE_VERSION = '9.1.2';
+            // Origen local (mismo dominio) primero — sobrevive a CSP, CDN caídos,
+            // ISP bloqueando gstatic, etc. Si por alguna razón el archivo local
+            // no existe (deploy roto), caemos a CDNs externos como red de
+            // seguridad. CSP debe permitir gstatic + jsdelivr + unpkg.
+            var CDN_BASES = [
+                '/lib/firebase/' + FIREBASE_VERSION,
+                'https://www.gstatic.com/firebasejs/' + FIREBASE_VERSION,
+                'https://cdn.jsdelivr.net/npm/firebase@' + FIREBASE_VERSION + '/compat',
+                'https://unpkg.com/firebase@' + FIREBASE_VERSION + '/compat'
+            ];
+            var SCRIPTS = ['firebase-app-compat.js', 'firebase-messaging-compat.js'];
+            var BACKOFFS_MS = [1000, 2000, 5000, 10000, 20000, 30000];
+
+            window.__firebaseLoadState = 'loading';
+            var _readyResolve;
+            window.__firebaseReady = new Promise(function (resolve) { _readyResolve = resolve; });
+
+            function isFirebaseLoaded() {
+                return typeof window.firebase !== 'undefined' && !!window.firebase.messaging;
+            }
+
+            function loadScript(src) {
+                return new Promise(function (resolve, reject) {
+                    var s = document.createElement('script');
+                    s.src = src + (src.indexOf('?') >= 0 ? '&' : '?') + 'r=' + Date.now();
+                    s.async = false;
+                    s.crossOrigin = 'anonymous';
+                    s.onload = function () { resolve(); };
+                    s.onerror = function () { reject(new Error('script load failed: ' + src)); };
+                    document.head.appendChild(s);
+                });
+            }
+
+            async function tryLoadFromCDN(cdnBase) {
+                for (var i = 0; i < SCRIPTS.length; i++) {
+                    await loadScript(cdnBase + '/' + SCRIPTS[i]);
+                }
+                if (!isFirebaseLoaded()) {
+                    throw new Error('scripts cargados pero global firebase indefinido');
+                }
+            }
+
+            async function attemptLoadAcrossCDNs() {
+                var lastErr = null;
+                for (var c = 0; c < CDN_BASES.length; c++) {
+                    if (isFirebaseLoaded()) return;
+                    try {
+                        await tryLoadFromCDN(CDN_BASES[c]);
+                        return;
+                    } catch (err) {
+                        lastErr = err;
+                        console.warn('[FCM] CDN falló (' + CDN_BASES[c] + '):', err.message);
+                    }
+                }
+                throw lastErr || new Error('todas las CDN fallaron');
+            }
+
+            var _retrying = false;
+            async function retryLoop() {
+                if (_retrying || isFirebaseLoaded()) return;
+                _retrying = true;
+                try {
+                    for (var attempt = 0; attempt < BACKOFFS_MS.length; attempt++) {
+                        if (isFirebaseLoaded()) break;
+                        try {
+                            await attemptLoadAcrossCDNs();
+                            if (isFirebaseLoaded()) {
+                                console.log('[FCM] ✅ Firebase SDK cargado en reintento', attempt + 1);
+                                break;
+                            }
+                        } catch (err) {
+                            window.__firebaseLoadError = err && err.message ? err.message : String(err);
+                            console.warn('[FCM] Reintento ' + (attempt + 1) + ' falló:', window.__firebaseLoadError);
+                        }
+                        await new Promise(function (r) { setTimeout(r, BACKOFFS_MS[attempt]); });
+                    }
+                } finally {
+                    _retrying = false;
+                }
+
+                if (isFirebaseLoaded()) {
+                    window.__firebaseLoadState = 'ready';
+                    _readyResolve();
+                } else {
+                    window.__firebaseLoadState = 'failed-retrying';
+                    console.warn('[FCM] ⚠️ Firebase no cargó tras varios intentos. Esperando reconexión / foreground / retry manual...');
+                }
+            }
+
+            // API pública: forzar un reintento (botón NOTIS o navegador volvió online).
+            window.__firebaseRetryNow = function () {
+                if (isFirebaseLoaded()) {
+                    if (window.__firebaseLoadState !== 'ready') {
+                        window.__firebaseLoadState = 'ready';
+                        _readyResolve();
+                    }
+                    return Promise.resolve();
+                }
+                return retryLoop();
+            };
+
+            // Camino feliz: los <script> estáticos ya cargaron. Si no, retryLoop.
+            setTimeout(function () {
+                if (isFirebaseLoaded()) {
+                    window.__firebaseLoadState = 'ready';
+                    _readyResolve();
+                    return;
+                }
+                console.warn('[FCM] Firebase no cargó vía <script> estáticos, iniciando reintentos...');
+                retryLoop();
+            }, 0);
+
+            // Auto-recovery: re-trigger ante eventos que sugieren que la red puede estar OK ahora.
+            window.addEventListener('online', function () {
+                if (!isFirebaseLoaded()) {
+                    console.log('[FCM] online event — reintentando carga de Firebase');
+                    retryLoop();
+                }
+            });
+            document.addEventListener('visibilitychange', function () {
+                if (document.visibilityState === 'visible' && !isFirebaseLoaded()) {
+                    console.log('[FCM] visibilitychange visible — reintentando carga de Firebase');
+                    retryLoop();
+                }
+            });
+        })();
+    </script>
+
+    <link rel="stylesheet" href="/css/base.css">
+    <link rel="stylesheet" href="/css/login.css">
+    <link rel="stylesheet" href="/css/header.css">
+    <link rel="stylesheet" href="/css/chat.css">
+    <link rel="stylesheet" href="/css/modals.css">
+    <link rel="stylesheet" href="/css/responsive.css">
+    <style>
+        /* In-app notification banner (foreground PWA) */
+        .in-app-notification-banner {
+            position: fixed;
+            top: 16px;
+            left: 50%;
+            transform: translate(-50%, -120%);
+            width: calc(100% - 32px);
+            max-width: 440px;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            border: 1px solid rgba(255, 215, 0, 0.4);
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+            z-index: 99999;
+            opacity: 0;
+            transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.4s ease;
+            cursor: pointer;
+            overflow: hidden;
+        }
+        .in-app-notification-banner.show {
+            transform: translate(-50%, 0);
+            opacity: 1;
+        }
+        .notif-banner-content {
+            display: flex;
+            align-items: center;
+            padding: 12px;
+            gap: 12px;
+        }
+        .notif-banner-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            flex-shrink: 0;
+        }
+        .notif-banner-text {
+            flex: 1;
+            min-width: 0;
+        }
+        .notif-banner-title {
+            font-weight: 600;
+            font-size: 14px;
+            color: #ffd700;
+            margin-bottom: 2px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .notif-banner-body {
+            font-size: 13px;
+            color: #e0e0e0;
+            line-height: 1.3;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+        .notif-banner-close {
+            background: rgba(255, 255, 255, 0.1);
+            border: none;
+            color: #fff;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            font-size: 20px;
+            line-height: 1;
+            cursor: pointer;
+            flex-shrink: 0;
+            transition: background 0.2s;
+        }
+        .notif-banner-close:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+    </style>
+</head>
+<body>
+    <!-- Login Screen -->
+    <div id="loginScreen" class="login-screen">
+        <div class="login-box">
+            <div class="login-logo">🎰</div>
+            <h1>VIPCARGAS</h1>
+            <p>Inicia sesión para continuar</p>
+            
+            <form id="loginForm" autocomplete="on">
+                <div style="display:flex;gap:0;margin-bottom:12px;border-radius:8px;overflow:hidden;border:1px solid rgba(212,175,55,0.3);">
+                    <!-- iOS Safari fix: touch-action:manipulation evita el delay de 300ms del doble-tap;
+                         -webkit-tap-highlight-color asegura feedback visual al tocar. Los handlers se asignan
+                         por addEventListener en auth.js para no depender de inline onclick (más confiable en iOS). -->
+                    <button type="button" id="loginByUsernameBtn" onclick="switchLoginMode('username')" style="flex:1;padding:8px 4px;font-size:12px;background:rgba(212,175,55,0.2);color:#d4af37;border:none;cursor:pointer;font-weight:600;-webkit-tap-highlight-color:rgba(212,175,55,0.3);touch-action:manipulation;-webkit-appearance:none;appearance:none;">👤 Usuario</button>
+                    <button type="button" id="loginByPhoneBtn" onclick="switchLoginMode('phone')" style="flex:1;padding:8px 4px;font-size:12px;background:transparent;color:#888;border:none;cursor:pointer;-webkit-tap-highlight-color:rgba(212,175,55,0.3);touch-action:manipulation;-webkit-appearance:none;appearance:none;">📱 Celular</button>
+                </div>
+                <div class="input-group" id="loginUsernameGroup">
+                    <label>Usuario</label>
+                    <input type="text" id="username" name="username" placeholder="Ingresa tu usuario" required autocomplete="username">
+                </div>
+                <div class="input-group hidden" id="loginPhoneGroup">
+                    <label>Número de celular</label>
+                    <div style="display:flex;gap:6px;align-items:center;">
+                        <select id="loginPhonePrefix" style="flex-shrink:0;width:100px;padding:8px 6px;border-radius:8px;border:1px solid rgba(212,175,55,0.3);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;">
+                            <option value="+54">🇦🇷 +54</option>
+                            <option value="+591">🇧🇴 +591</option>
+                            <option value="+55">🇧🇷 +55</option>
+                            <option value="+56">🇨🇱 +56</option>
+                            <option value="+57">🇨🇴 +57</option>
+                            <option value="+506">🇨🇷 +506</option>
+                            <option value="+53">🇨🇺 +53</option>
+                            <option value="+593">🇪🇨 +593</option>
+                            <option value="+503">🇸🇻 +503</option>
+                            <option value="+502">🇬🇹 +502</option>
+                            <option value="+504">🇭🇳 +504</option>
+                            <option value="+52">🇲🇽 +52</option>
+                            <option value="+505">🇳🇮 +505</option>
+                            <option value="+507">🇵🇦 +507</option>
+                            <option value="+595">🇵🇾 +595</option>
+                            <option value="+51">🇵🇪 +51</option>
+                            <option value="+1">🇩🇴 +1</option>
+                            <option value="+598">🇺🇾 +598</option>
+                            <option value="+58">🇻🇪 +58</option>
+                        </select>
+                        <input type="tel" id="loginPhone" name="loginPhone" placeholder="11 1234-5678" autocomplete="tel" style="flex:1;">
+                    </div>
+                </div>
+                <div id="phoneLoginModeToggle" class="hidden" style="display:flex;gap:8px;margin:8px 0;">
+                    <button type="button" id="phoneLoginByPassword" onclick="switchPhoneLoginMode('password')" style="flex:1;padding:6px;font-size:11px;background:rgba(212,175,55,0.2);color:#d4af37;border:1px solid rgba(212,175,55,0.3);border-radius:6px;cursor:pointer;font-weight:600;">🔑 Contraseña</button>
+                    <button type="button" id="phoneLoginByOtp" onclick="switchPhoneLoginMode('otp')" style="flex:1;padding:6px;font-size:11px;background:transparent;color:#888;border:1px solid rgba(255,255,255,0.1);border-radius:6px;cursor:pointer;">📱 Código SMS</button>
+                </div>
+                <div id="phoneOtpStep" class="hidden" style="margin-top:8px;">
+                    <p id="phoneOtpMsg" style="color:#00ff88;font-size:12px;margin-bottom:8px;"></p>
+                    <div class="input-group">
+                        <label>Código de verificación</label>
+                        <input type="text" id="phoneOtpCode" placeholder="Ingresá el código de 6 dígitos" maxlength="6" inputmode="numeric" style="text-align:center;font-size:18px;letter-spacing:8px;">
+                    </div>
+                    <button type="button" onclick="handlePhoneOtpVerify()" class="btn btn-primary" id="phoneOtpVerifyBtn">✅ Verificar código</button>
+                </div>
+                <div class="input-group">
+                    <label>Contraseña</label>
+                    <input type="password" id="password" name="password" placeholder="Ingresa tu contraseña" required autocomplete="current-password">
+                </div>
+                <button type="submit" class="btn btn-primary">Ingresar a la Sala</button>
+            </form>
+            
+            <div style="margin: 15px 0; text-align: center;">
+                <span style="color: #888; font-size: 14px;">¿No tienes cuenta?</span>
+                <button id="registerBtn" class="btn btn-secondary" style="margin-top: 8px; width: 100%;">📝 Registrarse</button>
+            </div>
+            
+            <div style="margin: 10px 0; display: flex; gap: 8px;">
+                <button id="findUserBtn" class="btn btn-secondary" style="flex: 1; font-size: 12px;" onclick="showModal('resetPassModal')">🔑 Recuperar Contraseña</button>
+            </div>
+            
+            <button id="helpBtn" class="btn btn-secondary">📞 Ayuda</button>
+            <button id="installBtn" class="btn btn-secondary">📱 Instalar App</button>
+            
+            <div id="errorMessage" class="error-message"></div>
+        </div>
+    </div>
+
+    <!-- Chat Screen -->
+    <div id="chatScreen" class="chat-screen hidden">
+        <!-- Header -->
+        <header class="header">
+            <!-- Sección izquierda: Fueguito + Configuración/Cerrar sesión -->
+            <div class="header-left">
+                <button id="fireBtn" class="fire-btn" title="Racha diaria - Reclama cada día!">
+                    🔥
+                    <span class="fire-streak" id="fireStreak">0</span>
+                </button>
+                <div class="user-action-btns">
+                    <button class="settings-btn" id="settingsBtn" title="Configuración">⚙️</button>
+                    <button class="referral-btn" id="referralBtn" title="Mis Referidos">🤝</button>
+                    <button class="logout-btn" id="logoutBtn" style="display:none;">🚪</button>
+                </div>
+            </div>
+            
+            <!-- Sección centro: Reembolsos -->
+            <div class="header-center">
+                <button id="dailyRefundBtn" class="refund-btn daily" title="Reembolso Diario 20%">
+                    <span class="refund-label-full">📅 Reembolso<br>Diario</span>
+                    <span class="refund-label-short">📅</span>
+                    <span class="refund-amount" id="dailyRefundAmount">$0</span>
+                    <span class="refund-timer" id="dailyRefundTimer"></span>
+                </button>
+                <button id="weeklyRefundBtn" class="refund-btn weekly" title="Reembolso Semanal 10% (Lun-Mar)">
+                    <span class="refund-label-full">📆 Reembolso<br>Semanal</span>
+                    <span class="refund-label-short">📆</span>
+                    <span class="refund-amount" id="weeklyRefundAmount">$0</span>
+                    <span class="refund-timer" id="weeklyRefundTimer"></span>
+                </button>
+                <button id="monthlyRefundBtn" class="refund-btn monthly" title="Reembolso Mensual 5% (Desde día 7)">
+                    <span class="refund-label-full">🗓️ Reembolso<br>Mensual</span>
+                    <span class="refund-label-short">🗓️</span>
+                    <span class="refund-amount" id="monthlyRefundAmount">$0</span>
+                    <span class="refund-timer" id="monthlyRefundTimer"></span>
+                </button>
+                <!-- Botón unificado de reembolsos solo en móvil (reemplaza los 3 botones separados) -->
+                <button id="unifiedRefundBtn" class="refund-btn unified-refund-btn" title="Reembolsos" onclick="VIP.refunds.showUnifiedRefundModal()" style="display:none;">
+                    🎁 Reembolsos
+                </button>
+            </div>
+            
+            <!-- Sección derecha: Usuario y acciones -->
+            <div class="header-right">
+                <!-- BOTÓN PLATAFORMA - Solo usuario -->
+                <button id="plataformaBtn" class="plataforma-btn" title="Ir al Casino" onclick="VIP.ui.openPlatformModal()">
+                    🎰 CASINO
+                </button>
+                <!-- BOTÓN CANAL INFORMATIVO - URL configurable desde admin -->
+                <a id="canalInformativoBtn" href="#" target="_blank" rel="noopener noreferrer" class="plataforma-btn" title="Canal Informativo" style="display:none;background:linear-gradient(135deg,#1a73e8 0%,#0d47a1 100%);">
+                    📢 CANAL INFORMATIVO
+                </a>
+                <!-- BOTÓN APP - Instalar PWA (siempre visible; se oculta cuando la app ya está instalada) -->
+                <button class="app-install-btn" id="appInstallBtn" title="Instalar App">
+                    📱 APP
+                </button>
+                <!-- BOTÓN NOTIFICACIONES - Solo visible en modo standalone/PWA instalada -->
+                <button class="notification-btn" id="notificationBtn" title="Activar Notificaciones">
+                    🔔 NOTIS
+                </button>
+                <a href="https://wa.link/metawin2026" target="_blank" class="support-btn" style="display: flex; align-items: center; gap: 5px;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="flex-shrink: 0;">
+                        <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
+                    </svg>
+                    SOPORTE
+                </a>
+                <button class="info-btn" id="infoBtn" title="Información del servicio">ℹ️ INFO</button>
+                <span class="user-name" id="currentUser">Usuario</span>
+                <button class="mobile-menu-btn" onclick="VIP.ui.toggleDrawer()" aria-label="Menú">☰</button>
+            </div>
+        </header>
+
+        <!-- Promo Banner -->
+        <div class="promo-banner">
+            <div class="promo-track">
+                <span class="promo-item">🎁 ¡RETIROS SIN LIMITE! 🎁</span>
+                <span class="promo-separator">★</span>
+                <span class="promo-item">🔥 ATENCIÓN 24 HORAS 🔥</span>
+                <span class="promo-separator">★</span>
+                <span class="promo-item">🔥 REEMBOLSOS DIARIOS 🔥</span>
+                <span class="promo-separator">★</span>
+                <span class="promo-item">💎 VIP 💎</span>
+                <span class="promo-separator">★</span>
+                <span class="promo-item">🎁 ¡RETIROS SIN LIMITE! 🎁</span>
+                <span class="promo-separator">★</span>
+                <span class="promo-item">🔥 ATENCIÓN 24 HORAS 🔥</span>
+                <span class="promo-separator">★</span>
+                <span class="promo-item">🔥 REEMBOLSOS DIARIOS 🔥</span>
+                <span class="promo-separator">★</span>
+                <span class="promo-item">💎 VIP 💎</span>
+                <span class="promo-separator">★</span>
+            </div>
+        </div>
+
+        <!-- Banner de Notificaciones (auto-actualiza según estado de permiso) -->
+        <div id="notifBanner" style="display:none; background: linear-gradient(135deg, #6a0dad 0%, #9d4edd 100%); color: #fff; padding: 12px 16px; border-radius: 12px; margin: 8px 12px; box-shadow: 0 4px 15px rgba(157,78,221,0.5); border: 1px solid rgba(255,255,255,0.2);">
+            <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                <span id="notifBannerIcon" style="font-size: 22px;">🔔</span>
+                <div style="flex: 1; min-width: 0;">
+                    <strong id="notifBannerText" style="font-size: 13px; display: block;">¡Activá las notificaciones para recibir regalos, bonus y atención 24/7!</strong>
+                </div>
+                <div style="display: flex; gap: 8px; flex-shrink: 0;">
+                    <button id="notifBannerActivate" style="background: #fff; color: #6a0dad; border: none; border-radius: 8px; padding: 8px 14px; font-weight: 700; font-size: 12px; cursor: pointer;">🔔 Activar</button>
+                    <button id="notifBannerClose" style="background: rgba(255,255,255,0.2); color: #fff; border: none; border-radius: 8px; padding: 8px 12px; font-weight: 600; font-size: 12px; cursor: pointer;">✕</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal de instrucciones cuando notifs están bloqueadas en PWA -->
+        <div id="notifBlockedModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.85); z-index:10000; align-items:center; justify-content:center; padding:20px;">
+            <div style="background: linear-gradient(135deg, #1a0033 0%, #0a0015 100%); border:2px solid #d4af37; border-radius:20px; padding:24px; max-width:420px; color:#fff; box-shadow:0 20px 60px rgba(0,0,0,.5);">
+                <h3 style="color:#d4af37; margin:0 0 12px; font-size:1.3rem;">🔕 Notificaciones bloqueadas</h3>
+                <p style="margin:0 0 14px; color:#eee; line-height:1.5; font-size:.95rem;">
+                    No vas a recibir avisos de <strong>recargas, retiros, bonus ni respuestas del soporte</strong>. Para activarlas hay 2 opciones:
+                </p>
+                <div style="background:rgba(212,175,55,.08); border:1px solid rgba(212,175,55,.3); border-radius:10px; padding:12px; margin-bottom:12px;">
+                    <strong style="color:#d4af37; display:block; margin-bottom:6px; font-size:.9rem;">Opción 1 (más rápida)</strong>
+                    <ol style="margin:0; padding-left:20px; line-height:1.6; font-size:.88rem; color:#ddd;">
+                        <li>Mantené presionado el ícono de la app en tu pantalla</li>
+                        <li>Tocá <strong>"Información de la app"</strong></li>
+                        <li>Entrá en <strong>Notificaciones</strong></li>
+                        <li>Activá <strong>"Mostrar notificaciones"</strong></li>
+                    </ol>
+                </div>
+                <div style="background:rgba(157,78,221,.08); border:1px solid rgba(157,78,221,.3); border-radius:10px; padding:12px; margin-bottom:14px;">
+                    <strong style="color:#9d4edd; display:block; margin-bottom:6px; font-size:.9rem;">Opción 2 (siempre funciona)</strong>
+                    <ol style="margin:0; padding-left:20px; line-height:1.6; font-size:.88rem; color:#ddd;">
+                        <li>Desinstalá esta app de tu celular</li>
+                        <li>Volvé a instalarla desde el sitio</li>
+                        <li>Cuando aparezca el cartel de notificaciones, tocá <strong>"Permitir"</strong></li>
+                    </ol>
+                </div>
+                <button id="notifBlockedModalClose" style="width:100%; background:#d4af37; color:#000; border:none; border-radius:10px; padding:12px; font-weight:700; font-size:.95rem; cursor:pointer;">Entendido</button>
+            </div>
+        </div>
+
+        <!-- Chat Section -->
+        <section class="chat-section">
+            <div class="chat-container">
+                <div class="chat-messages" id="chatMessages">
+                    <!-- Messages will be loaded here -->
+                </div>
+                <!-- Indicador "Escribiendo..." -->
+                <div id="typingIndicator" style="display: none; padding: 8px 15px; color: #00ff88; font-size: 12px; font-style: italic; text-align: left;"></div>
+            </div>
+        </section>
+
+        <!-- Chat Input -->
+        <div class="chat-input-container">
+            <!-- CORREGIDO: Indicador de envío de imagen -->
+            <div id="sendingIndicator" style="display: none; padding: 8px 15px; background: rgba(212, 175, 55, 0.2); border-radius: 8px; margin-bottom: 8px; color: #d4af37; font-size: 13px; text-align: center;">
+                <span style="display: inline-block; animation: spin 1s linear infinite;">⏳</span> Enviando imagen...
+            </div>
+            <div class="chat-input">
+                <button class="action-btn attach-btn" id="attachBtn" title="Adjuntar imagen">📸</button>
+                <button class="action-btn cbu-chat-btn" id="cbuChatBtn" title="Ver datos CBU para transferir">💳 CBU</button>
+                <input type="file" id="fileInput" accept="image/*,video/*" style="display: none;">
+                <textarea id="messageInput" placeholder="Escribe un mensaje..." rows="1"></textarea>
+                <button class="send-btn" id="sendBtn">📤</button>
+            </div>
+        </div>
+
+      <div class="drawer-overlay" id="drawerOverlay" onclick="VIP.ui.toggleDrawer()"></div>
+      <div class="mobile-drawer" id="mobileDrawer">
+        <button class="drawer-close-btn" onclick="VIP.ui.toggleDrawer()">✕</button>
+        <div class="drawer-content" id="drawerContent">
+          <!-- Los botones se clonan aquí dinámicamente desde el header -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal Plataforma -->
+    <div id="platformModal" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:20000;align-items:center;justify-content:center;background:rgba(0,0,0,0.80);" onclick="if(event.target===event.currentTarget)VIP.ui.closePlatformModal()">
+        <div style="background:linear-gradient(135deg,#1a0033 0%,#2d0052 100%);border:2px solid #d4af37;border-radius:18px;padding:28px 22px;max-width:360px;width:92%;max-height:90vh;overflow-y:auto;box-shadow:0 0 50px rgba(212,175,55,0.45);text-align:center;position:relative;">
+            <button onclick="VIP.ui.closePlatformModal()" style="position:absolute;top:12px;right:14px;background:none;border:none;color:#888;font-size:22px;cursor:pointer;line-height:1;" title="Cerrar">✕</button>
+            <div style="font-size:38px;margin-bottom:6px;">🎰</div>
+            <h3 style="color:#d4af37;margin:0 0 4px;font-size:20px;font-weight:800;">Acceder al CASINO</h3>
+            <p style="color:#aaa;margin:0 0 20px;font-size:13px;">Tus datos de acceso están listos</p>
+
+            <!-- Usuario -->
+            <div style="background:rgba(212,175,55,0.1);border:1px solid rgba(212,175,55,0.35);border-radius:12px;padding:16px 14px;margin-bottom:10px;">
+                <p style="color:#888;font-size:11px;margin:0 0 5px;text-transform:uppercase;letter-spacing:1px;">👤 Tu usuario</p>
+                <p id="platformModalUser" style="color:#ffd700;font-weight:900;font-size:22px;margin:0 0 10px;word-break:break-all;letter-spacing:1px;">Usuario</p>
+                <button onclick="VIP.ui.copyPlatformUsername()" style="background:linear-gradient(135deg,#d4af37 0%,#f7931e 100%);color:#000;border:none;padding:7px 18px;border-radius:20px;font-weight:700;font-size:13px;cursor:pointer;">📋 Copiar usuario</button>
+                <p id="platformCopyFeedback" style="color:#00e676;font-size:12px;font-weight:600;margin:8px 0 0;display:none;">✅ ¡Usuario ya copiado al portapapeles!</p>
+            </div>
+
+            <!-- Contraseña -->
+            <div style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);border-radius:12px;padding:16px 14px;margin-bottom:16px;">
+                <p style="color:#888;font-size:11px;margin:0 0 5px;text-transform:uppercase;letter-spacing:1px;">🔑 Tu contraseña actual</p>
+                <div style="display:flex;align-items:center;justify-content:center;gap:8px;">
+                    <span id="platformModalPassword" style="color:#fff;font-weight:700;font-size:19px;letter-spacing:3px;font-family:monospace;word-break:break-all;">••••••••</span>
+                    <button id="platformPasswordToggle" onclick="VIP.ui.togglePlatformPasswordVisibility()" style="background:none;border:none;color:#aaa;font-size:19px;cursor:pointer;padding:2px 4px;line-height:1;" title="Mostrar u ocultar contraseña">👁</button>
+                </div>
+                <!-- Campo para ingresar contraseña si no está en memoria -->
+                <div id="platformPasswordInputSection" style="display:none;margin-top:10px;">
+                    <p style="color:#ffcc00;font-size:12px;margin:0 0 6px;">Ingresá tu contraseña para verla aquí esta sesión:</p>
+                    <input id="platformPasswordManualInput" type="password" placeholder="Tu contraseña" autocomplete="current-password" style="width:100%;padding:9px;border-radius:8px;border:1px solid #d4af37;background:#1a0033;color:#fff;font-size:14px;box-sizing:border-box;text-align:center;" onkeydown="if(event.key==='Enter')VIP.ui.savePlatformPassword()"/>
+                    <button onclick="VIP.ui.savePlatformPassword()" style="background:linear-gradient(135deg,#444 0%,#666 100%);color:#fff;border:none;padding:6px 16px;border-radius:20px;font-size:12px;cursor:pointer;margin-top:8px;">Guardar para esta sesión</button>
+                </div>
+            </div>
+
+            <p style="color:#aaa;font-size:12px;margin:0 0 16px;">Abrí el casino y pegá tu usuario — la contraseña ya la tenés acá</p>
+
+            <div style="background:rgba(255,204,0,0.08);border:1px solid rgba(255,204,0,0.25);border-radius:10px;padding:12px 14px;margin-bottom:16px;font-size:12px;color:#ffcc66;text-align:left;line-height:1.6;">
+                ℹ️ <strong>La contraseña del casino es la misma que usás para entrar a VIPCargas.</strong><br>
+                Si la olvidaste, podés cambiarla desde <em>Cambiar Contraseña</em> — se actualiza automáticamente en ambos lados.
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:10px;">
+                <button id="platformGoBtn" onclick="VIP.ui.goToPlatform()" style="background:linear-gradient(135deg,#6a0dad 0%,#9b30ff 100%);color:#fff;border:none;padding:14px;border-radius:25px;font-weight:800;font-size:17px;cursor:pointer;box-shadow:0 4px 18px rgba(106,13,173,0.45);">🎰 Abrir Casino</button>
+                <button onclick="VIP.ui.showPlatformPasswordChange()" style="background:linear-gradient(135deg,#2d6a4f 0%,#40916c 100%);color:#fff;border:none;padding:10px;border-radius:25px;font-weight:700;font-size:14px;cursor:pointer;">🔐 Cambiar Contraseña</button>
+                <button onclick="VIP.ui.closePlatformModal()" style="background:rgba(255,68,68,0.15);border:1px solid #ff4444;color:#ff6666;padding:10px;border-radius:25px;font-weight:700;font-size:14px;cursor:pointer;">✕ Cerrar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Registro -->
+    <div id="registerModal" class="modal hidden">
+        <div class="modal-content" style="position: relative;">
+            <button onclick="hideModal('registerModal')" style="position: absolute; top: 15px; right: 15px; background: none; border: none; color: #888; font-size: 24px; cursor: pointer; z-index: 10;">✕</button>
+            <div class="modal-header">
+                <h2>📝 Crear Cuenta</h2>
+                <p>Regístrate para acceder a la Sala de Juegos</p>
+            </div>
+            <!-- Paso 1: Datos del registro -->
+            <div id="registerStep1">
+            <form id="registerForm" autocomplete="on">
+                <div class="input-group">
+                    <label>Usuario *</label>
+                    <input type="text" id="registerUsername" name="username" placeholder="Elige un usuario" required autocomplete="username" minlength="3" maxlength="20">
+                    <span id="usernameCheckResult" style="font-size: 11px; margin-top: 4px; display: block;"></span>
+                </div>
+                <div class="input-group">
+                    <label>Contraseña *</label>
+                    <input type="password" id="registerPassword" name="new-password" placeholder="Mínimo 6 caracteres" required minlength="6" autocomplete="new-password">
+                </div>
+                <div class="input-group">
+                    <label>Repetir Contraseña *</label>
+                    <input type="password" id="registerPasswordConfirm" name="confirm-password" placeholder="Repite tu contraseña" required minlength="6" autocomplete="new-password">
+                </div>
+                <div class="input-group">
+                    <label>Teléfono *</label>
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <select id="registerPhonePrefix" style="flex-shrink:0; width: 110px; padding: 8px 6px; border-radius: 8px; border: 1px solid rgba(212,175,55,0.3); background: rgba(0,0,0,0.4); color: #fff; font-size: 14px;">
+                            <option value="+54">🇦🇷 +54</option>
+                            <option value="+591">🇧🇴 +591</option>
+                            <option value="+55">🇧🇷 +55</option>
+                            <option value="+56">🇨🇱 +56</option>
+                            <option value="+57">🇨🇴 +57</option>
+                            <option value="+506">🇨🇷 +506</option>
+                            <option value="+53">🇨🇺 +53</option>
+                            <option value="+593">🇪🇨 +593</option>
+                            <option value="+503">🇸🇻 +503</option>
+                            <option value="+502">🇬🇹 +502</option>
+                            <option value="+504">🇭🇳 +504</option>
+                            <option value="+52">🇲🇽 +52</option>
+                            <option value="+505">🇳🇮 +505</option>
+                            <option value="+507">🇵🇦 +507</option>
+                            <option value="+595">🇵🇾 +595</option>
+                            <option value="+51">🇵🇪 +51</option>
+                            <option value="+1">🇩🇴 +1</option>
+                            <option value="+598">🇺🇾 +598</option>
+                            <option value="+58">🇻🇪 +58</option>
+                        </select>
+                        <input type="tel" id="registerPhone" name="phone" placeholder="9 11 1234-5678" required autocomplete="tel" style="flex: 1;">
+                    </div>
+                    <span style="font-size: 11px; color: #a5b4fc; margin-top: 6px; display: block; line-height: 1.5;">📱 Tu número es importante: podrás iniciar sesión con él, recuperar tu usuario y restablecer tu contraseña si la olvidás.</span>
+                </div>
+                <div class="input-group">
+                    <label>Email (opcional)</label>
+                    <input type="email" id="registerEmail" name="email" placeholder="tu@email.com" autocomplete="email">
+                </div>
+                <div class="input-group">
+                    <label>Código de Referido (opcional)</label>
+                    <input type="text" id="registerReferralCode" name="referralCode" placeholder="Ej: VIP3X7" autocomplete="off" maxlength="12" style="text-transform:uppercase;letter-spacing:2px;">
+                    <span style="font-size: 11px; color: #888;">Si te invitó alguien, ingresá su código para vincularte.</span>
+                </div>
+                <div id="registerError" class="error-message"></div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" id="closeRegisterModal">Cancelar</button>
+                    <button type="button" class="btn btn-primary" id="registerSendOtpBtn" onclick="handleRegisterSendOtp()">📱 Enviar código SMS</button>
+                </div>
+            </form>
+            </div>
+            <!-- Paso 2: Verificar OTP -->
+            <div id="registerStep2" style="display:none;">
+                <p id="registerOtpMsg" style="color: #00ff88; text-align: center; margin-bottom: 16px;"></p>
+                <div class="input-group">
+                    <label>Código de verificación *</label>
+                    <input type="text" inputmode="numeric" pattern="[0-9]{6}" id="registerOtpCode" placeholder="Código de 6 dígitos" maxlength="6" style="font-size: 22px; text-align: center; letter-spacing: 8px;">
+                </div>
+                <div id="registerOtpError" class="error-message"></div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="document.getElementById('registerStep1').style.display=''; document.getElementById('registerStep2').style.display='none';">Volver</button>
+                    <button type="button" class="btn btn-primary" id="registerSubmitBtn" onclick="handleRegisterWithOtp()">📝 Crear Cuenta</button>
+                </div>
+                <p style="font-size: 11px; color: #888; text-align: center; margin-top: 10px;">¿No recibiste el código? <a href="#" style="color: #d4af37;" onclick="document.getElementById('registerStep1').style.display=''; document.getElementById('registerStep2').style.display='none'; return false;">Volvé a intentarlo</a></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Cambio de Contraseña Obligatorio -->
+    <div id="changePasswordModal" class="modal hidden" onclick="if(event.target===event.currentTarget)VIP.ui.hideModal('changePasswordModal')">
+        <div class="modal-content" style="position: relative;">
+            <button id="changePasswordCloseBtn" onclick="VIP.ui.hideModal('changePasswordModal')" style="position: absolute; top: 15px; right: 15px; background: none; border: none; color: #888; font-size: 24px; cursor: pointer; z-index: 10;">✕</button>
+            <div class="modal-header">
+                <h2 id="changePasswordTitle">🔐 Cambiar Contraseña</h2>
+                <p id="changePasswordSubtitle">Ingresá tu nueva contraseña para actualizarla.</p>
+            </div>
+            <!-- Paso 1: Datos del cambio -->
+            <form id="changePasswordForm" autocomplete="on">
+                <div class="input-group">
+                    <label>Nueva Contraseña</label>
+                    <input type="password" id="newPasswordInput" name="new-password" placeholder="Mínimo 6 caracteres" required minlength="6" autocomplete="new-password">
+                </div>
+                <div class="input-group">
+                    <label>Repetir Contraseña</label>
+                    <input type="password" id="confirmPasswordInput" name="confirm-password" placeholder="Repite tu contraseña" required minlength="6" autocomplete="new-password">
+                </div>
+                <div class="input-group" id="changePasswordWhatsAppGroup">
+                    <label>Número de WhatsApp *</label>
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <select id="changePasswordWhatsAppPrefix" style="flex-shrink:0; width: 110px; padding: 8px 6px; border-radius: 8px; border: 1px solid rgba(212,175,55,0.3); background: rgba(0,0,0,0.4); color: #fff; font-size: 14px;">
+                            <option value="+54">🇦🇷 +54</option>
+                            <option value="+55">🇧🇷 +55</option>
+                            <option value="+56">🇨🇱 +56</option>
+                            <option value="+57">🇨🇴 +57</option>
+                            <option value="+51">🇵🇪 +51</option>
+                            <option value="+58">🇻🇪 +58</option>
+                            <option value="+598">🇺🇾 +598</option>
+                            <option value="+595">🇵🇾 +595</option>
+                            <option value="+591">🇧🇴 +591</option>
+                            <option value="+593">🇪🇨 +593</option>
+                            <option value="+52">🇲🇽 +52</option>
+                            <option value="+502">🇬🇹 +502</option>
+                            <option value="+503">🇸🇻 +503</option>
+                            <option value="+504">🇭🇳 +504</option>
+                            <option value="+505">🇳🇮 +505</option>
+                            <option value="+506">🇨🇷 +506</option>
+                            <option value="+507">🇵🇦 +507</option>
+                            <option value="+53">🇨🇺 +53</option>
+                            <option value="+1">🇩🇴 +1</option>
+                        </select>
+                        <input type="tel" id="changePasswordWhatsApp" name="whatsapp" placeholder="9 11 1234-5678" autocomplete="tel" style="flex: 1;">
+                    </div>
+                    <span style="font-size: 11px; color: #888;">Necesario para recuperar tu cuenta. Te vamos a enviar un código por SMS para verificarlo.</span>
+                </div>
+                <div id="changePasswordWhatsAppInfo" style="display:none; font-size: 12px; color: #00ff88; padding: 8px 0; margin-bottom: 8px;"></div>
+                <div class="input-group" style="display: flex; align-items: center; gap: 10px;">
+                    <input type="checkbox" id="closeAllSessions" style="width: auto;">
+                    <label for="closeAllSessions" style="margin: 0; font-size: 14px;">Cerrar todas las sesiones activas</label>
+                </div>
+                <div id="passwordError" class="error-message"></div>
+                <button type="submit" class="btn btn-primary" id="changePasswordSubmitBtn">💾 Guardar Cambios</button>
+            </form>
+            <!-- Paso 2: Verificación OTP del nuevo teléfono.
+                 Reutiliza el patrón del paso 2 de registro (#registerStep2) y el flujo OTP del PR #260. -->
+            <div id="changePasswordOtpStep" style="display:none;">
+                <p id="changePasswordOtpMsg" style="color: #00ff88; text-align: center; margin-bottom: 16px;"></p>
+                <div class="input-group">
+                    <label>Código de verificación *</label>
+                    <input type="text" inputmode="numeric" pattern="[0-9]{6}" id="changePasswordOtpCode" placeholder="Código de 6 dígitos" maxlength="6" style="font-size: 22px; text-align: center; letter-spacing: 8px;">
+                </div>
+                <div id="changePasswordOtpError" class="error-message"></div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" id="changePasswordOtpBackBtn">Volver</button>
+                    <button type="button" class="btn btn-primary" id="changePasswordOtpVerifyBtn">✅ Verificar y Guardar</button>
+                </div>
+                <p style="font-size: 11px; color: #888; text-align: center; margin-top: 10px;">
+                    ¿No recibiste el código?
+                    <button type="button" id="changePasswordOtpResendBtn" style="background:none;border:none;color:#d4af37;cursor:pointer;text-decoration:underline;padding:0;font-size:11px;">Reenviar SMS</button>
+                    <span id="changePasswordOtpResendCooldown" style="color:#888;display:none;"></span>
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Depositar -->
+    <div id="depositModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>💰 Depositar</h2>
+                <p>Ingresa el monto a depositar en tu cuenta</p>
+            </div>
+            <form id="depositForm">
+                <div class="input-group">
+                    <label>Monto ($)</label>
+                    <input type="number" id="depositAmount" placeholder="Ej: 10000" required min="100">
+                </div>
+                <div id="depositError" class="error-message"></div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" id="closeDepositModal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">💰 Depositar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal Retirar -->
+    <div id="withdrawModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>💸 Retirar</h2>
+                <p>Ingresa el monto a retirar de tu cuenta</p>
+            </div>
+            <form id="withdrawForm">
+                <div class="input-group">
+                    <label>Monto ($)</label>
+                    <input type="number" id="withdrawAmount" placeholder="Ej: 5000" required min="100">
+                </div>
+                <div id="withdrawError" class="error-message"></div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" id="closeWithdrawModal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary" style="background: linear-gradient(135deg, #ff4444 0%, #cc0000 100%);">💸 Retirar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal CBU -->
+    <div id="cbuModal" class="modal hidden">
+        <div class="modal-content" style="max-width: 450px; position: relative;">
+            <button onclick="hideModal('cbuModal')" style="position: absolute; top: 15px; right: 15px; background: none; border: none; color: #888; font-size: 24px; cursor: pointer; z-index: 10;">✕</button>
+            <div class="modal-header">
+                <h2>💳 Datos para Transferir</h2>
+                <p>Usa estos datos para realizar tu depósito</p>
+            </div>
+            <div id="cbuContent" style="padding: 20px;">
+                <div style="background: linear-gradient(135deg, rgba(157,78,221,0.1) 0%, rgba(102,3,168,0.1) 100%); border: 1px solid #9d4edd; border-radius: 12px; padding: 20px; margin-bottom: 15px;">
+                    <div style="margin-bottom: 15px;">
+                        <span style="color: #888; font-size: 12px; display: block; margin-bottom: 5px;">🏦 Banco</span>
+                        <span id="cbuBankDisplay" style="color: #fff; font-size: 16px; font-weight: bold;">-</span>
+                    </div>
+                    <div style="margin-bottom: 15px;">
+                        <span style="color: #888; font-size: 12px; display: block; margin-bottom: 5px;">👤 Titular</span>
+                        <span id="cbuTitularDisplay" style="color: #fff; font-size: 16px; font-weight: bold;">-</span>
+                    </div>
+                    <div style="margin-bottom: 15px;">
+                        <span style="color: #888; font-size: 12px; display: block; margin-bottom: 5px;">🔢 CBU</span>
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <span id="cbuNumberDisplay" style="color: #ffd700; font-size: 18px; font-weight: bold; font-family: monospace;">-</span>
+                            <button onclick="copyToClipboard('cbuNumberDisplay')" style="background: rgba(255,215,0,0.2); border: 1px solid #ffd700; color: #ffd700; padding: 5px 10px; border-radius: 5px; cursor: pointer; font-size: 12px;">📋 Copiar</button>
+                        </div>
+                    </div>
+                    <div>
+                        <span style="color: #888; font-size: 12px; display: block; margin-bottom: 5px;">📱 Alias</span>
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <span id="cbuAliasDisplay" style="color: #00ff88; font-size: 16px; font-weight: bold; font-family: monospace;">-</span>
+                            <button onclick="copyToClipboard('cbuAliasDisplay')" style="background: rgba(0,255,136,0.2); border: 1px solid #00ff88; color: #00ff88; padding: 5px 10px; border-radius: 5px; cursor: pointer; font-size: 12px;">📋 Copiar</button>
+                        </div>
+                    </div>
+                </div>
+                <div style="background: rgba(0,0,0,0.3); border-radius: 8px; padding: 15px; text-align: center;">
+                    <p style="color: #888; font-size: 12px; margin: 0;">✅ Una vez realizada la transferencia, envianos el comprobante por aquí</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Picker de Reembolsos (solo móvil) -->
+    <div id="unifiedRefundModal" class="modal hidden" onclick="if(event.target===this)hideModal('unifiedRefundModal')">
+        <div class="modal-content" style="max-width:380px;position:relative;" onclick="event.stopPropagation()">
+            <button onclick="hideModal('unifiedRefundModal')" style="position:absolute;top:12px;right:12px;background:none;border:none;color:#888;font-size:22px;cursor:pointer;z-index:10;line-height:1;">✕</button>
+            <div class="modal-header">
+                <h2>🎁 Reembolsos</h2>
+                <p style="font-size:12px;color:#aaa;">Elegí el tipo de reembolso a consultar</p>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:12px;padding:10px 0;">
+                <button onclick="VIP.refunds.showRefundModal('daily');VIP.ui.hideModal('unifiedRefundModal');" class="btn btn-primary" style="font-size:15px;padding:14px;">
+                    📅 Reembolso Diario (20% pérdidas de ayer)
+                </button>
+                <button onclick="VIP.refunds.showRefundModal('weekly');VIP.ui.hideModal('unifiedRefundModal');" class="btn btn-primary" style="font-size:15px;padding:14px;background:linear-gradient(135deg,#1a6b3a,#2d9b56);">
+                    📆 Reembolso Semanal (10% pérdidas semana)
+                </button>
+                <button onclick="VIP.refunds.showRefundModal('monthly');VIP.ui.hideModal('unifiedRefundModal');" class="btn btn-primary" style="font-size:15px;padding:14px;background:linear-gradient(135deg,#1a3a6b,#2d5b9b);">
+                    🗓️ Reembolso Mensual (5% pérdidas mes)
+                </button>
+                <button onclick="VIP.ui.hideModal('unifiedRefundModal')" class="btn btn-secondary">Cerrar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Reembolso -->
+    <div id="refundModal" class="modal hidden" onclick="if(event.target===this)hideModal('refundModal')">
+        <div class="modal-content" style="max-width: 500px; position: relative;" onclick="event.stopPropagation()">
+            <button onclick="hideModal('refundModal')" style="position: absolute; top: 12px; right: 12px; background: none; border: none; color: #888; font-size: 22px; cursor: pointer; z-index: 10; line-height: 1;">✕</button>
+            <div class="modal-header">
+                <h2 id="refundModalTitle">🎁 Reembolso</h2>
+            </div>
+            <div class="refund-details">
+                <!-- Balance actual -->
+                <div class="refund-info-row" style="background: rgba(0,255,136,0.1); padding: 10px; border-radius: 8px; margin-bottom: 15px;">
+                    <span style="font-weight: bold; color: #00ff88;">💰 Tu Balance Actual:</span>
+                    <span id="refundCurrentBalance" style="font-weight: bold; color: #00ff88; font-size: 18px;">$0</span>
+                </div>
+                
+                <!-- Período del reembolso -->
+                <div style="background: rgba(100,149,237,0.1); padding: 10px; border-radius: 8px; margin-bottom: 15px; border: 1px solid rgba(100,149,237,0.3);">
+                    <span style="color: #6495ed; font-size: 12px;">📅 Período: </span>
+                    <span id="refundPeriod" style="color: #fff; font-size: 12px;">-</span>
+                </div>
+                
+                <!-- Movimientos del período -->
+                <div style="background: rgba(255,255,255,0.05); padding: 12px; border-radius: 8px; margin-bottom: 10px;">
+                    <p id="refundMovementsTitle" style="color: #aaa; font-size: 11px; margin-bottom: 8px; text-align: center;">📊 BASE DE CÁLCULO</p>
+                    <p style="color: #ff9900; font-size: 11px; margin-bottom: 8px; text-align: center;">⚠️ El reembolso se calcula sobre tus <strong>pérdidas netas</strong> (NETWIN), no sobre el balance de depósitos y retiros.</p>
+                    <div class="refund-info-row">
+                        <span>Pérdidas del período:</span>
+                        <span id="refundNetAmount" style="color: #ff6b6b;">$0</span>
+                    </div>
+                </div>
+                
+                <!-- Reembolso -->
+                <div class="refund-info-row highlight" style="background: linear-gradient(135deg, rgba(212,175,55,0.2), rgba(255,215,0,0.2)); padding: 15px; border-radius: 10px; border: 1px solid rgba(212,175,55,0.5);">
+                    <span style="color: #ffd700; font-weight: bold;">🎁 Reembolso a recibir:</span>
+                    <span id="refundAmount" style="color: #ffd700; font-size: 20px; font-weight: bold;">$0</span>
+                </div>
+                
+                <!-- Info de disponibilidad (solo para semanal y mensual) -->
+                <div id="refundAvailabilityInfo" style="margin-top: 10px; padding: 10px; border-radius: 8px; display: none;"></div>
+                
+                <!-- Info adicional -->
+                <div id="refundExtraInfo" style="margin-top: 10px; font-size: 11px; color: #888; text-align: center;"></div>
+            </div>
+            <div class="refund-timer-modal" id="refundTimerModal"></div>
+            <div class="modal-actions">
+                <button id="claimRefundBtn" class="btn btn-primary">🎁 Reclamar Reembolso</button>
+                <button id="closeRefundModal" class="btn btn-secondary">Cerrar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Fueguito -->
+    <div id="fireModal" class="modal hidden" onclick="if(event.target === this) hideModal('fireModal')">
+        <div class="modal-content" style="position: relative;" onclick="event.stopPropagation()">
+            <button onclick="hideModal('fireModal')" style="position: absolute; top: 15px; right: 15px; background: none; border: none; color: #888; font-size: 24px; cursor: pointer; z-index: 10; line-height: 1;">✕</button>
+            <div class="modal-header">
+                <h2>🔥 Racha Diaria - Fueguito</h2>
+                <p>Reclamá tu fueguito cada día para ganar recompensas!</p>
+            </div>
+            <div class="fire-details">
+                <div class="fire-info-row">
+                    <span>Días consecutivos:</span>
+                    <span id="fireStreakModal" style="font-size: 24px; color: #ff4500; font-weight: bold;">0</span>
+                </div>
+                <div class="fire-info-row">
+                    <span>Último reclamo:</span>
+                    <span id="fireLastClaim">Nunca</span>
+                </div>
+                <!-- Barra de progreso hacia día 10 -->
+                <div class="fire-progress-container" style="margin: 15px 0; padding: 15px; background: rgba(255, 69, 0, 0.1); border-radius: 12px; border: 1px solid rgba(255, 69, 0, 0.3);">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                        <span style="color: #ff4500; font-weight: bold;">Progreso</span>
+                        <span id="fireProgressText" style="color: #ff4500;">0/10 días</span>
+                    </div>
+                    <div style="background: rgba(0,0,0,0.3); border-radius: 10px; height: 25px; overflow: hidden;">
+                        <div id="fireProgressBar" style="background: linear-gradient(90deg, #ff4500, #ff8c00); height: 100%; width: 0%; transition: width 0.5s ease; display: flex; align-items: center; justify-content: center; color: #fff; font-weight: bold; font-size: 12px;">
+                            0%
+                        </div>
+                    </div>
+                </div>
+                <!-- Condición de actividad mensual -->
+                <div id="fireActivityCondition" style="background: rgba(0,255,136,0.08); border: 1px solid rgba(0,255,136,0.2); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; font-size: 12px; color: #ccc;">
+                    📋 <strong>Condición:</strong> Para acceder a las recompensas necesitás tener movimientos de cargas y retiros durante el mes.
+                </div>
+                <!-- Premio pendiente 100% próxima carga -->
+                <div id="firePendingBonus" style="display:none; background: rgba(212,175,55,0.12); border: 1px solid rgba(212,175,55,0.3); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; font-size: 13px;"></div>
+                <!-- Premio en efectivo pendiente de reclamo -->
+                <div id="firePendingCashReward" style="display:none; background: rgba(255,215,0,0.12); border: 1px solid rgba(255,215,0,0.4); border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; font-size: 13px; text-align:center;"></div>
+                <!-- Menú de recompensas / milestones -->
+                <div style="margin-bottom: 10px;">
+                    <p style="color: #ff8c00; font-weight: bold; font-size: 13px; margin-bottom: 6px;">🏆 Recompensas disponibles:</p>
+                    <div id="fireMilestonesMenu">
+                        <div style="padding:8px 12px;margin:4px 0;border-radius:8px;background:rgba(255,255,255,0.05);">🔒 <strong>Día 10</strong>: $10.000 <span style="font-size:10px;color:#aaa;">(requiere actividad del mes)</span></div>
+                        <div style="padding:8px 12px;margin:4px 0;border-radius:8px;background:rgba(255,255,255,0.05);">🔒 <strong>Día 15</strong>: 100% en próxima carga</div>
+                        <div style="padding:8px 12px;margin:4px 0;border-radius:8px;background:rgba(255,255,255,0.05);">🔒 <strong>Día 20</strong>: $50.000 <span style="font-size:10px;color:#aaa;">(requiere actividad del mes)</span></div>
+                        <div style="padding:8px 12px;margin:4px 0;border-radius:8px;background:rgba(255,255,255,0.05);">🔒 <strong>Día 30</strong>: $200.000 <span style="font-size:10px;color:#aaa;">(requiere actividad del mes)</span></div>
+                    </div>
+                </div>
+            </div>
+            <div id="fireCondition" style="color: #00ff88; text-align: center; margin-bottom: 15px; font-size: 12px;">
+                ✅ Reclamá tu fueguito gratis una vez por día!
+            </div>
+            <div class="modal-actions">
+                <button id="claimFireBtn" class="btn btn-primary" style="background: linear-gradient(135deg, #ff4500 0%, #ff6347 100%);">🔥 Reclamar Fueguito</button>
+                <button id="closeFireModal" class="btn btn-secondary">Cerrar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Información del Servicio -->
+    <div id="infoModal" class="modal hidden" onclick="if(event.target === this) hideModal('infoModal')">
+        <div class="modal-content" style="max-width: 600px; position: relative;" onclick="event.stopPropagation()">
+            <button onclick="hideModal('infoModal')" style="position: absolute; top: 15px; right: 15px; background: none; border: none; color: #888; font-size: 24px; cursor: pointer; z-index: 10;">✕</button>
+            <div class="modal-header">
+                <h2>🎮 Información del Servicio</h2>
+                <p>Descubre todos los beneficios de nuestra Sala de Juegos</p>
+            </div>
+            <div class="info-grid">
+                <div class="info-card">
+                    <div class="info-card-icon">💰</div>
+                    <div class="info-card-title">Reembolso Diario 20%</div>
+                    <div class="info-card-desc">Recibe el 20% de tus pérdidas del día anterior directamente en tu cuenta</div>
+                </div>
+                <div class="info-card">
+                    <div class="info-card-icon">📅</div>
+                    <div class="info-card-title">Reembolso Semanal 10%</div>
+                    <div class="info-card-desc">Reclama el 10% de tus pérdidas semanales los lunes y martes</div>
+                </div>
+                <div class="info-card">
+                    <div class="info-card-icon">🗓️</div>
+                    <div class="info-card-title">Reembolso Mensual 5%</div>
+                    <div class="info-card-desc">Obtén el 5% de tus pérdidas del mes pasado después del día 7</div>
+                </div>
+                <div class="info-card">
+                    <div class="info-card-icon">🔥</div>
+                    <div class="info-card-title">Fueguito Diario</div>
+                    <div class="info-card-desc">Reclama tu fueguito cada día y acumula racha. ¡Al día 10 gana $10.000!</div>
+                </div>
+                <div class="info-card">
+                    <div class="info-card-icon">🎁</div>
+                    <div class="info-card-title">Bonificaciones</div>
+                    <div class="info-card-desc">Recibe bonificaciones especiales en tus depósitos con porcentajes desde 10% hasta 100%</div>
+                </div>
+                <div class="info-card">
+                    <div class="info-card-icon">💬</div>
+                    <div class="info-card-title">Atención 24/7</div>
+                    <div class="info-card-desc">Chat en vivo con nuestros agentes las 24 horas del día, los 7 días de la semana</div>
+                </div>
+                <div class="info-card">
+                    <div class="info-card-icon">⚡</div>
+                    <div class="info-card-title">Retiros Sin Límite</div>
+                    <div class="info-card-desc">Retira tu dinero cuando quieras sin restricciones ni límites</div>
+                </div>
+                <div class="info-card">
+                    <div class="info-card-icon">🔒</div>
+                    <div class="info-card-title">Seguridad Total</div>
+                    <div class="info-card-desc">Tus datos y transacciones están protegidos con la máxima seguridad</div>
+                </div>
+            </div>
+            <div class="modal-actions" style="margin-top: 20px;">
+                <button id="closeInfoModal" class="btn btn-primary" style="width: 100%;">Entendido</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Configuración -->
+    <div id="settingsModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>⚙️ Configuración</h2>
+            </div>
+            <div class="modal-actions" style="flex-direction: column;">
+                <button id="changePasswordSettingsBtn" class="btn btn-secondary" style="width: 100%;">🔐 Cambiar Contraseña</button>
+                <button id="closeSettingsModal" class="btn btn-secondary" style="width: 100%;">Cerrar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Buscar Usuario por Teléfono - ELIMINADO (reemplazado por flujo OTP seguro) -->
+
+    <!-- Modal Cambiar Contraseña por Teléfono (flujo OTP 3 pasos) -->
+    <div id="resetPassModal" class="modal hidden">
+        <div class="modal-content">
+            <button onclick="hideModal('resetPassModal')" style="position: absolute; top: 15px; right: 15px; background: none; border: none; color: #888; font-size: 24px; cursor: pointer;">✕</button>
+            <div class="modal-header">
+                <h2>🔑 Recuperar Contraseña</h2>
+                <p>Verificá tu número de teléfono para restablecer tu contraseña</p>
+            </div>
+
+            <!-- Paso 1: Ingresar teléfono -->
+            <div id="resetStep1">
+                <div class="input-group">
+                    <label>Número de Teléfono *</label>
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <select id="resetPhonePrefix" style="flex-shrink:0; width: 110px; padding: 8px 6px; border-radius: 8px; border: 1px solid rgba(212,175,55,0.3); background: rgba(0,0,0,0.4); color: #fff; font-size: 14px;">
+                            <option value="+54">🇦🇷 +54</option>
+                            <option value="+591">🇧🇴 +591</option>
+                            <option value="+55">🇧🇷 +55</option>
+                            <option value="+56">🇨🇱 +56</option>
+                            <option value="+57">🇨🇴 +57</option>
+                            <option value="+506">🇨🇷 +506</option>
+                            <option value="+53">🇨🇺 +53</option>
+                            <option value="+593">🇪🇨 +593</option>
+                            <option value="+503">🇸🇻 +503</option>
+                            <option value="+502">🇬🇹 +502</option>
+                            <option value="+504">🇭🇳 +504</option>
+                            <option value="+52">🇲🇽 +52</option>
+                            <option value="+505">🇳🇮 +505</option>
+                            <option value="+507">🇵🇦 +507</option>
+                            <option value="+595">🇵🇾 +595</option>
+                            <option value="+51">🇵🇪 +51</option>
+                            <option value="+1">🇩🇴 +1</option>
+                            <option value="+598">🇺🇾 +598</option>
+                            <option value="+58">🇻🇪 +58</option>
+                        </select>
+                        <input type="tel" id="resetPassPhone" placeholder="9 11 1234-5678" style="flex: 1;">
+                    </div>
+                </div>
+                <div id="resetStep1Result" style="margin: 10px 0; padding: 10px; border-radius: 8px; display: none; font-size: 13px;"></div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-primary" onclick="handleRequestPasswordReset()">📱 Enviar código SMS</button>
+                    <button type="button" onclick="hideModal('resetPassModal')" class="btn btn-secondary">Cerrar</button>
+                </div>
+            </div>
+
+            <!-- Paso 2: Ingresar código OTP -->
+            <div id="resetStep2" style="display:none;">
+                <p id="resetStep2Msg" style="color: #00ff88; text-align: center; font-size: 13px; margin-bottom: 14px;"></p>
+                <div class="input-group">
+                    <label>Código de verificación *</label>
+                    <input type="text" inputmode="numeric" pattern="[0-9]{6}" id="resetOtpCode" placeholder="Código de 6 dígitos" maxlength="6" style="font-size: 22px; text-align: center; letter-spacing: 8px;">
+                </div>
+                <div id="resetStep2Error" style="color: #ff4444; font-size: 13px; margin: 8px 0; display: none;"></div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="document.getElementById('resetStep1').style.display=''; document.getElementById('resetStep2').style.display='none';">Volver</button>
+                    <button type="button" class="btn btn-primary" onclick="handleVerifyResetOtp()">🔍 Verificar código</button>
+                </div>
+            </div>
+
+            <!-- Paso 3: Nueva contraseña -->
+            <div id="resetStep3" style="display:none;">
+                <p id="resetStep3Username" style="color: #d4af37; text-align: center; font-size: 16px; font-weight: bold; margin-bottom: 14px;"></p>
+                <div class="input-group">
+                    <label>Nueva Contraseña *</label>
+                    <input type="password" id="resetPassNew" placeholder="Mínimo 6 caracteres" minlength="6">
+                </div>
+                <div class="input-group">
+                    <label>Confirmar Contraseña *</label>
+                    <input type="password" id="resetPassConfirm" placeholder="Repite la contraseña" minlength="6">
+                </div>
+                <div id="resetStep3Error" style="color: #ff4444; font-size: 13px; margin: 8px 0; display: none;"></div>
+                <div id="resetPassResult" style="margin: 15px 0; padding: 15px; border-radius: 10px; display: none;"></div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-primary" onclick="handleCompletePasswordReset()">🔑 Cambiar Contraseña</button>
+                    <button type="button" onclick="hideModal('resetPassModal')" class="btn btn-secondary">Cerrar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Socket.IO desde el servidor local -->
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/js/config.js"></script>
+    <script src="/js/auth.js"></script>
+    <script src="/js/socket.js"></script>
+    <script src="/js/chat.js"></script>
+    <script src="/js/refunds.js"></script>
+    <script src="/js/fire.js"></script>
+    <script src="/js/notifications.js"></script>
+    <script src="/js/ui.js"></script>
+    <script src="/js/app.js"></script>
+    
+    <!-- ============================================
+         FIREBASE CLOUD MESSAGING & PWA
+         ============================================ -->
+    <script>
+        // ============================================
+        // CONFIGURACIÓN DE FIREBASE
+        // ============================================
+        const firebaseConfig = {
+            apiKey: "AIzaSyAjZuVIxNY-SrnihkyNVupZ8AhXX6qxAxY",
+            authDomain: "saladejuegos-673fa.firebaseapp.com",
+            projectId: "saladejuegos-673fa",
+            storageBucket: "saladejuegos-673fa.firebasestorage.app",
+            messagingSenderId: "553123191180",
+            appId: "1:553123191180:web:277eb460ef78dab8525ea9",
+            measurementId: "G-3ZJRT0NCTE"
+        };
+        
+        // Inicializar Firebase. Si los <script> estáticos no llegaron a
+        // cargar, esperamos al loader con reintentos (window.__firebaseReady)
+        // antes de declararnos vencidos. Así el primer intento de NOTIS no
+        // falla por una pérdida de paquete inicial.
+        let app = null;
+        let messaging = null;
+
+        async function _initFirebaseWhenReady() {
+            try {
+                if (typeof firebase === 'undefined' || !firebase.messaging) {
+                    console.warn('[FCM] Firebase no listo aún, esperando loader con reintentos...');
+                    await window.__firebaseReady;
+                }
+                // Idempotente: si app ya fue inicializada, reusar la default.
+                if (!firebase.apps || firebase.apps.length === 0) {
+                    app = firebase.initializeApp(firebaseConfig);
+                } else {
+                    app = firebase.app();
+                }
+                messaging = firebase.messaging();
+                console.log('[FCM] ✅ Firebase inicializado correctamente');
+
+                // Si la auto-init de notificaciones (registerServiceWorker → initNotifications)
+                // se ejecutó ANTES de que Firebase cargara, salió en early-return sin obtener
+                // token. Ahora que messaging existe, reintentamos SIEMPRE en standalone:
+                //  - Si no hay token: lo obtenemos
+                //  - Si hay token pero el endpoint cambió (reinstall): se detecta dentro y
+                //    se fuerza refresh
+                //  - Si hay token y endpoint coincide: no se toca, sólo se confirma
+                try {
+                    const _isStandaloneNow2 = window.matchMedia('(display-mode: standalone)').matches ||
+                                              window.navigator.standalone === true;
+                    if (_isStandaloneNow2) {
+                        console.log('[FCM] Firebase listo — disparando auto-init/validación de notificaciones...');
+                        const _swReg = await navigator.serviceWorker.ready.catch(function (e) {
+                            console.warn('[FCM] SW ready falló en post-load init:', e && e.message);
+                            return null;
+                        });
+                        if (_swReg && typeof initNotifications === 'function') {
+                            initNotifications(_swReg);
+                        }
+                    }
+                } catch (postInitErr) {
+                    console.warn('[FCM] post-load initNotifications falló:', postInitErr && postInitErr.message);
+                }
+            } catch (error) {
+                console.error('[FCM] ❌ Error al inicializar Firebase:', error);
+            }
+        }
+        _initFirebaseWhenReady();
+        
+        // ============================================
+        // VARIABLES GLOBALES PWA
+        // ============================================
+        // Nota: deferredPrompt se declara en app.js
+        let fcmToken = null;
+        const VAPID_KEY = 'BHnnRx4J6u3aYBK_JExhceybaNNLhMEGosFSFau0niy0cSsW1qw02oZqyFFfOH-Hnr61mQq7TOVcM3TW58eVQRc';
+        // Guard: evita llamadas concurrentes a initNotifications (race condition fix)
+        let _notifInitializing = false;
+        // Tracking: último token FCM enviado exitosamente al backend (evita duplicados)
+        let _lastRegisteredToken = null;
+        // Tracking: último contexto registrado exitosamente al backend
+        let _lastRegisteredCtx = null;
+        // Tracking: si hay un intento pendiente de retry para registrar token
+        let _tokenRetryTimer = null;
+
+        // ── Utilidad: extraer userId del payload del JWT guardado en localStorage ──
+        // Solo decodifica el payload (base64) para obtener el userId con fines de
+        // tracking local de sesión. La verificación de firma se hace únicamente en
+        // el servidor; aquí se usa para detectar cambio de usuario en el mismo dispositivo.
+        function _extractUserIdFromJwt(jwtString) {
+            if (!jwtString) return null;
+            const parts = jwtString.split('.');
+            if (parts.length !== 3) return null; // JWT malformado: debe tener header.payload.signature
+            try {
+                const payload = JSON.parse(atob(parts[1]));
+                return String(payload.userId || payload.id || '');
+            } catch (_e) {
+                return null;
+            }
+        }
+        
+        // ============================================
+        // DETECTAR DISPOSITIVO
+        // ============================================
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+        const isAndroid = /Android/.test(navigator.userAgent);
+        const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+        
+        // ============================================
+        // REGISTRAR SERVICE WORKER
+        // ============================================
+        // ROOT CAUSE FIX (Issues #1 y #2):
+        //   Anteriormente existían dos SWs compitiendo en el scope /:
+        //     - user-sw.js  (registrado explícitamente, manejaba caché + push manual)
+        //     - firebase-messaging-sw.js (manejaba FCM mediante SDK)
+        //   Esto provocaba que el token FCM quedara asociado a un SW pero las
+        //   notificaciones llegaran al otro, haciendo que todos los envíos fallaran.
+        //   Ahora se usa SOLO firebase-messaging-sw.js, que combina FCM + caché.
+        //   user-sw.js es un stub de migración que se auto-desregistra.
+        async function registerServiceWorker() {
+            if (!('serviceWorker' in navigator)) {
+                console.log('[PWA] Service Worker no soportado');
+                return null;
+            }
+            
+            try {
+                // ROOT CAUSE FIX: registrar firebase-messaging-sw.js (no user-sw.js).
+                // FCM asocia el token FCM a la registration del SW. Si el SW activo es
+                // user-sw.js y FCM usa firebase-messaging-sw.js, los tokens no coinciden.
+                // Al usar un único SW (firebase-messaging-sw.js) se elimina ese conflicto.
+                const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js', {
+                    updateViaCache: 'none'
+                });
+                
+                console.log('[PWA] Service Worker registrado:', registration.scope);
+                
+                // Wait until the SW is active and controlling the page.
+                await navigator.serviceWorker.ready;
+                console.log('[PWA] Service Worker listo');
+                
+                return registration;
+            } catch (error) {
+                console.log('[PWA] Error al registrar Service Worker:', error);
+                return null;
+            }
+        }
+        
+        // Registrar SW e inicializar notificaciones
+        // Solo se intenta registrar token cuando el usuario está en la APP PWA instalada
+        // (modo standalone). En navegador normal no se registra ningún token push.
+        registerServiceWorker().then(async (swRegistration) => {
+            const _isStandaloneNow = window.matchMedia('(display-mode: standalone)').matches ||
+                                     window.navigator.standalone === true;
+
+            // Solo en standalone: limpiar token legacy de contexto 'browser' si existe.
+            // Esto migra silenciosamente a usuarios que tenían un token de navegador
+            // guardado antes de este cambio. No se llama deleteToken() para evitar
+            // destruir la suscripción push válida que pueda existir en el backend.
+            if (_isStandaloneNow) {
+                const _ctxStored = localStorage.getItem('fcmTokenContext');
+                if (_ctxStored === 'browser') {
+                    console.log('[FCM] Token de contexto browser encontrado en PWA standalone. Limpiando para obtener token PWA fresco...');
+                    localStorage.removeItem('fcmToken');
+                    localStorage.removeItem('fcmTokenContext');
+                    fcmToken = null;
+                }
+            }
+
+            initNotifications(swRegistration);
+        });
+        
+        // ============================================
+        // INICIALIZAR NOTIFICACIONES PUSH (AUTOMÁTICO)
+        // ============================================
+        async function initNotifications(swRegistration) {
+            // Race condition fix: si ya hay una inicialización en curso, ignorar esta llamada.
+            if (_notifInitializing) {
+                console.log('[FCM] initNotifications ya en progreso, ignorando llamada duplicada');
+                return;
+            }
+            _notifInitializing = true;
+
+            // Detectar dispositivo y modo de ejecución
+            const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+            const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+            const isAndroidDevice = /Android/.test(navigator.userAgent);
+            const isChromeBrowser = /Chrome/.test(navigator.userAgent) && !(/Edg\//.test(navigator.userAgent));
+            const isStandalone = window.matchMedia('(display-mode: standalone)').matches || 
+                                 window.navigator.standalone === true;
+
+            // Solo registrar token push cuando la app está instalada como PWA (modo standalone).
+            // En navegador normal no se obtiene ni registra ningún token para evitar mezclar
+            // contextos y generar tokens inválidos en el backend.
+            if (!isStandalone) {
+                console.log('[FCM] Modo browser detectado. Registro de push omitido (solo PWA instalada).');
+                _notifInitializing = false;
+                return;
+            }
+
+            console.log('[FCM] Inicializando notificaciones (PWA standalone)...');
+
+            // Debug logs útiles para diagnosticar en Android Chrome
+            console.log('[FCM] 📊 Entorno de ejecución:');
+            console.log('[FCM]   Modo display:', isStandalone ? 'standalone (PWA instalada)' : 'browser');
+            console.log('[FCM]   iOS:', isIOS ? 'Sí' : 'No');
+            console.log('[FCM]   Android:', isAndroidDevice ? 'Sí' : 'No');
+            console.log('[FCM]   Chrome:', isChromeBrowser ? 'Sí' : 'No');
+            console.log('[FCM]   Safari:', isSafari ? 'Sí' : 'No');
+            console.log('[FCM]   SW registration:', swRegistration ? swRegistration.scope : 'null');
+            console.log('[FCM]   Notification.permission:', 'Notification' in window ? Notification.permission : 'no soportado');
+            
+            if (isIOS) {
+                console.log('[FCM] 📱 iOS detectado (standalone)');
+                if (!isSafari) {
+                    console.log('[FCM] ⚠️ iOS detectado pero NO es Safari. Las notificaciones NO funcionarán.');
+                    if (typeof showToast === 'function') {
+                        showToast('⚠️ Las notificaciones requieren Safari en iPhone. Abrí esta página en Safari.', 'warning');
+                    }
+                }
+            }
+            
+            if (!messaging) {
+                // Distinguir causa solo para logs internos de debugging (no mostrar al usuario)
+                if (typeof firebase === 'undefined') {
+                    console.error('[FCM] ❌ Firebase SDK no cargado (posible problema de red o script bloqueado)');
+                } else if (isIOS) {
+                    console.error('[FCM] ❌ Firebase Messaging no disponible en iOS - requiere iOS 16.4+, Safari y app instalada');
+                } else {
+                    console.error('[FCM] ❌ Firebase Messaging falló al inicializar (getToken no disponible en este entorno)');
+                }
+                // No mostrar toast al usuario: esta es una inicialización automática y el
+                // sistema puede seguir operativo con un token registrado en sesiones anteriores.
+                _notifInitializing = false;
+                return;
+            }
+            
+            if (!('Notification' in window)) {
+                console.log('[FCM] Este navegador no soporta notificaciones');
+                _notifInitializing = false;
+                return;
+            }
+            
+            try {
+                // Verificar si ya tenemos permiso
+                let permission = Notification.permission;
+                console.log('[FCM] Permiso actual:', permission);
+                
+                // Si no está decidido, solicitar permiso.
+                // IMPORTANTE: En iOS (Safari/standalone), requestPermission requiere gesto del usuario.
+                // Por eso NO auto-solicitamos en iOS; el usuario debe presionar el botón NOTIS.
+                if (permission === 'default') {
+                    if (isIOS) {
+                        // En iOS, NO solicitamos permiso automáticamente.
+                        // El usuario debe tocar el botón NOTIS para disparar el gesto.
+                        console.log('[FCM] iOS detectado: omitiendo auto-solicitud de permiso. El usuario debe presionar NOTIS.');
+                        _notifInitializing = false;
+                        return;
+                    }
+                    permission = await Notification.requestPermission();
+                    console.log('[FCM] Permiso solicitado:', permission);
+                }
+                
+                // Si fue denegado, mostrar mensaje pero NO retornar
+                // El usuario puede activarlo manualmente después
+                if (permission === 'denied') {
+                    console.log('[FCM] ⚠️ Permiso denegado.');
+                    if (typeof showToast === 'function') {
+                        showToast('🔕 Notificaciones bloqueadas. Activá desde configuración del sitio (ícono de candado).', 'warning');
+                    }
+                    // No retornamos - el usuario podría reactivar desde configuración
+                }
+                
+                if (permission === 'granted') {
+                    console.log('[FCM] ✅ Permiso concedido');
+
+                    // Obtener token FCM usando la misma SW registration que se pasó
+                    // (evita que FCM y la SW de caché compitan por el mismo scope)
+                    console.log('[FCM] Solicitando token FCM...');
+                    let currentToken;
+                    try {
+                        // Usar la registration de firebase-messaging-sw.js que se pasó.
+                        // Si no se proporcionó, hacer fallback a navigator.serviceWorker.ready.
+                        const usedRegistration = swRegistration || (await navigator.serviceWorker.ready);
+                        console.log('[FCM] Service Worker listo:', usedRegistration.scope);
+
+                        // ── AUTO-REFRESH: detectar token stale por endpoint ──────────
+                        // Si el endpoint de la push subscription cambió respecto al guardado
+                        // (reinstalación de la PWA, SW update, suscripción expirada) o si
+                        // tenemos token cacheado pero ya no hay subscription, el token está
+                        // muerto. Forzamos deleteToken para que getToken cree una suscripción
+                        // y un token completamente nuevos. Si el endpoint no cambió, el
+                        // token que ya tenemos es válido y no se toca (cumple "si tiene
+                        // token funcional q deje el q esta").
+                        try {
+                            const _existingSub = await usedRegistration.pushManager.getSubscription();
+                            const _currentEndpoint = _existingSub ? _existingSub.endpoint : null;
+                            const _storedEndpoint = localStorage.getItem('fcmPushEndpoint');
+                            const _cachedToken = localStorage.getItem('fcmToken');
+                            let _shouldForceRefresh = false;
+                            let _reason = '';
+                            if (_storedEndpoint && _currentEndpoint && _storedEndpoint !== _currentEndpoint) {
+                                _shouldForceRefresh = true;
+                                _reason = 'endpoint cambió (reinstall o SW update)';
+                            } else if (_cachedToken && !_currentEndpoint) {
+                                _shouldForceRefresh = true;
+                                _reason = 'token cacheado pero sin push subscription (reinstall)';
+                            } else if (_cachedToken && _storedEndpoint && _currentEndpoint && _storedEndpoint === _currentEndpoint) {
+                                // Token y endpoint coinciden → token funcional, no tocar.
+                                console.log('[FCM] Endpoint coincide con el almacenado → token actual válido, no se fuerza refresh');
+                            }
+                            if (_shouldForceRefresh) {
+                                console.log('[FCM] 🔄 Auto-refresh: ' + _reason + ' — forzando deleteToken');
+                                try { await messaging.deleteToken(); } catch (delE) { console.warn('[FCM] deleteToken auto-refresh:', delE.message); }
+                                localStorage.removeItem('fcmToken');
+                                localStorage.removeItem('fcmPushEndpoint');
+                                fcmToken = null;
+                            }
+                        } catch (autoRefErr) {
+                            console.warn('[FCM] Auto-refresh por endpoint falló:', autoRefErr.message);
+                        }
+
+                        // Estrategia de 3 niveles: si getToken falla, escalamos progresivamente
+                        // hasta recuperar un token usable sin intervención del usuario.
+                        //   1) getToken directo.
+                        //   2) deleteToken + getToken (limpia push subscription obsoleta).
+                        //   3) unregister SW + register SW + getToken (recupera SW corrupto).
+                        let _activeReg = usedRegistration;
+                        try {
+                            currentToken = await messaging.getToken({
+                                vapidKey: VAPID_KEY,
+                                serviceWorkerRegistration: _activeReg
+                            });
+                            console.log('[FCM] getToken completado');
+                        } catch (firstErr) {
+                            console.warn('[FCM] ⚠️ Error en getToken (intento 1):', firstErr.message);
+                            console.log('[FCM] Tier 2: limpiando suscripción push y reintentando...');
+                            try {
+                                await messaging.deleteToken();
+                            } catch (delErr) {
+                                console.warn('[FCM] deleteToken (tier 2):', delErr.message);
+                            }
+                            try {
+                                currentToken = await messaging.getToken({
+                                    vapidKey: VAPID_KEY,
+                                    serviceWorkerRegistration: _activeReg
+                                });
+                                console.log('[FCM] ✅ getToken completado tras tier 2');
+                            } catch (secondErr) {
+                                // Tier 3: el SW puede haber quedado en estado corrupto.
+                                // Lo desregistramos y volvemos a registrar de cero.
+                                console.warn('[FCM] ⚠️ Error en getToken (intento 2):', secondErr.message);
+                                console.log('[FCM] Tier 3: re-registrando Service Worker y reintentando...');
+                                try {
+                                    if (_activeReg && typeof _activeReg.unregister === 'function') {
+                                        await _activeReg.unregister();
+                                        console.log('[FCM] SW desregistrado correctamente');
+                                    }
+                                } catch (unregErr) {
+                                    console.warn('[FCM] No se pudo desregistrar SW:', unregErr.message);
+                                }
+                                try {
+                                    _activeReg = await navigator.serviceWorker.register('/firebase-messaging-sw.js', {
+                                        updateViaCache: 'none'
+                                    });
+                                    await navigator.serviceWorker.ready;
+                                    console.log('[FCM] SW re-registrado:', _activeReg.scope);
+                                } catch (regErr) {
+                                    console.error('[FCM] Re-registro de SW falló:', regErr.message);
+                                    throw secondErr;
+                                }
+                                currentToken = await messaging.getToken({
+                                    vapidKey: VAPID_KEY,
+                                    serviceWorkerRegistration: _activeReg
+                                });
+                                console.log('[FCM] ✅ getToken completado tras tier 3 (SW re-registrado)');
+                            }
+                        }
+                    } catch (tokenError) {
+                        // Llega aquí si falló tanto el intento inicial como el reintento post-deleteToken.
+                        // En este punto el token es irrecuperable sin intervención del usuario.
+                        console.error('[FCM] ❌ Error al obtener token (intento 1 + reintento fallaron):', tokenError.message);
+                        console.error('[FCM] Código de error:', tokenError.code || 'n/a');
+                        console.error('[FCM] Error completo:', tokenError);
+                        
+                        if (isIOS) {
+                            console.log('[FCM] ⚠️ En iOS, asegúrate de:');
+                            console.log('[FCM] 1. Usar Safari (no Chrome ni otros navegadores)');
+                            console.log('[FCM] 2. Agregar la app a la pantalla de inicio');
+                            console.log('[FCM] 3. Abrir desde el icono de inicio instalado');
+                            console.log('[FCM] 4. iOS 16.4 o superior');
+                        } else if (isAndroidDevice) {
+                            console.log('[FCM] ⚠️ En Android Chrome, posibles causas:');
+                            console.log('[FCM] 1. VAPID key incorrecta o expirada');
+                            console.log('[FCM] 2. Service Worker no registrado o en error');
+                            console.log('[FCM] 3. Proyecto Firebase mal configurado');
+                            console.log('[FCM] 4. Revisar: chrome://flags/#unsafely-treat-insecure-origin-as-secure (en desarrollo)');
+                        }
+                        return;
+                    }
+                    
+                    if (currentToken) {
+                        fcmToken = currentToken;
+                        console.log('[FCM] ✅ Token obtenido:', currentToken.substring(0, 30) + '...');
+
+                        // Guardar en localStorage junto con el contexto de ejecución
+                        // (standalone = PWA instalada, browser = Chrome/navegador normal).
+                        // Esto permite detectar si el usuario cambió de contexto en futuras
+                        // sesiones (ej: Chrome web → app instalada) y forzar re-registro.
+                        const _ctx = isStandalone ? 'standalone' : 'browser';
+                        localStorage.setItem('fcmToken', currentToken);
+                        localStorage.setItem('fcmTokenContext', _ctx);
+                        console.log('[FCM] Token guardado en localStorage (contexto: ' + _ctx + ')');
+
+                        // Guardar el endpoint de la push subscription como huella digital.
+                        // En la próxima carga comparamos: si cambió → token stale → refresh
+                        // automático sin intervención del usuario.
+                        try {
+                            const _newSub = await _activeReg.pushManager.getSubscription();
+                            if (_newSub && _newSub.endpoint) {
+                                localStorage.setItem('fcmPushEndpoint', _newSub.endpoint);
+                                console.log('[FCM] Endpoint guardado:', _newSub.endpoint.substring(0, 60) + '...');
+                            }
+                        } catch (epErr) {
+                            console.warn('[FCM] No se pudo guardar endpoint:', epErr.message);
+                        }
+
+                        // Notificar a la UI para que el botón NOTIS pase a verde inmediatamente
+                        try { window.dispatchEvent(new Event('fcm-token-changed')); } catch (_) {}
+
+                        // Enviar token al servidor (si está logueado)
+                        await sendTokenToServer(currentToken);
+                        
+                        // Nota: En Firebase v9, el token se refresca automáticamente
+                        // No es necesario usar onTokenRefresh
+                        
+                    } else {
+                        console.log('[FCM] ⚠️ No se pudo obtener el token');
+                    }
+                } else {
+                    console.log('[FCM] Permiso denegado o no concedido');
+                }
+            } catch (error) {
+                console.error('[FCM] ❌ Error al inicializar notificaciones:', error);
+                console.error('[FCM] Stack:', error.stack);
+            } finally {
+                _notifInitializing = false;
+            }
+        }
+        
+        // ============================================
+        // ENVIAR TOKEN AL SERVIDOR (ÚNICA FUENTE DE VERDAD)
+        // Características:
+        //   - Dedup: no re-envía si el mismo token ya fue registrado
+        //   - Retry: si no hay authToken (login pendiente), agenda un reintento
+        //   - Rotation: si el token cambió respecto al último registrado, re-envía
+        // ============================================
+        async function sendTokenToServer(token) {
+            if (!token) {
+                console.log('[FCM] No hay token para enviar');
+                return false;
+            }
+
+            const authToken = localStorage.getItem('userToken');
+            if (!authToken) {
+                console.log('[FCM] ⏳ Usuario no logueado, token en localStorage. Se registrará después del login.');
+                // Agendar retry: cuando el usuario haga login, sendFcmTokenAfterLogin se
+                // encargará. Pero por si acaso, hacemos un retry con backoff limitado.
+                if (!_tokenRetryTimer) {
+                    _tokenRetryTimer = setTimeout(function() {
+                        _tokenRetryTimer = null;
+                        const t = localStorage.getItem('fcmToken');
+                        if (t && localStorage.getItem('userToken')) {
+                            console.log('[FCM] Retry automático: intentando registrar token...');
+                            sendTokenToServer(t);
+                        }
+                    }, 5000);
+                }
+                return false;
+            }
+
+            // Obtener el permiso actual para enviarlo al backend
+            const _perm = ('Notification' in window) ? Notification.permission : 'default';
+            const _ctx = localStorage.getItem('fcmTokenContext') || 'browser';
+
+            console.log('[FCM] Registrando token en backend (contexto: ' + _ctx + ', permiso: ' + _perm + ')...');
+            try {
+                const response = await fetch('/api/notifications/register-token', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + authToken
+                    },
+                    body: JSON.stringify({ fcmToken: token, fcmTokenContext: _ctx, notifPermission: _perm })
+                });
+
+                const data = await response.json();
+                if (data.success) {
+                    _lastRegisteredToken = token;
+                    _lastRegisteredCtx = _ctx;
+                    // Persistir el userId del token JWT para poder detectar cambio de usuario
+                    // en futuras sesiones (ver sendFcmTokenAfterLogin). Fallo al parsear se ignora.
+                    const _uid = _extractUserIdFromJwt(localStorage.getItem('userToken'));
+                    if (_uid) localStorage.setItem('fcmTokenUserId', _uid);
+                    console.log('[FCM] ✅ Token registrado en backend para:', data.username);
+                    return true;
+                } else {
+                    console.log('[FCM] ⚠️ Backend rechazó registro:', data.error);
+                    return false;
+                }
+            } catch (error) {
+                console.log('[FCM] ⚠️ Error de red al registrar token:', error.message);
+                return false;
+            }
+        }
+
+        // ============================================
+        // FUNCIÓN GLOBAL: Enviar token después del login
+        // (llamada desde auth.js después de login / register / verifyToken)
+        // Unificada: siempre usa sendTokenToServer como fuente de verdad.
+        // Si no hay token FCM todavía, inicia initNotifications para generarlo.
+        //
+        // PWA CONTEXT-CHANGE FIX:
+        //   Cuando el usuario pasa de Chrome web (browser) a la app instalada
+        //   (standalone) o viceversa, el token FCM puede haber cambiado porque
+        //   la suscripción push subyacente es distinta para cada contexto.
+        //   Este handler detecta el cambio de contexto y fuerza la re-obtención
+        //   del token correcto antes de registrarlo en el backend, evitando que
+        //   el backend quede apuntando al token viejo/inválido.
+        // ============================================
+        window.sendFcmTokenAfterLogin = async function() {
+            console.log('[FCM] sendFcmTokenAfterLogin() llamado');
+
+            // Solo registrar token cuando estamos en la APP PWA instalada (modo standalone).
+            // En navegador normal se omite el registro para evitar mezclar contextos.
+            const _nowStandalone = window.matchMedia('(display-mode: standalone)').matches ||
+                                   window.navigator.standalone === true;
+            if (!_nowStandalone) {
+                console.log('[FCM] sendFcmTokenAfterLogin: modo browser, omitiendo registro de push.');
+                return;
+            }
+
+            // Detectar cambio de usuario: si el token cacheado pertenece a otra sesión,
+            // descartarlo para evitar que un usuario herede el token de otro.
+            const _storedUserId = localStorage.getItem('fcmTokenUserId');
+            const _cachedTokenCheck = localStorage.getItem('fcmToken');
+            if (_cachedTokenCheck && _storedUserId) {
+                const _currentUid = _extractUserIdFromJwt(localStorage.getItem('userToken'));
+                if (_currentUid && _currentUid !== _storedUserId) {
+                    console.log('[FCM] ⚠️ Cambio de usuario detectado (' + _storedUserId + ' → ' + _currentUid + '). Descartando token de sesión anterior; se obtendrá uno nuevo.');
+                    localStorage.removeItem('fcmToken');
+                    localStorage.removeItem('fcmTokenContext');
+                    localStorage.removeItem('fcmTokenUserId');
+                    fcmToken = null;
+                }
+            }
+
+            const token = localStorage.getItem('fcmToken');
+            const _currentCtx = 'standalone';
+            const _storedCtx  = localStorage.getItem('fcmTokenContext'); // null en sesiones antiguas
+
+            // ── CASO A: Hay token en caché PWA ───────────────────────────────────
+            if (token) {
+                // Antes de confiar en el token cacheado, validar la huella del endpoint:
+                // si la push subscription actual tiene un endpoint distinto al guardado
+                // (PWA reinstalada, SW recreado), el token cacheado está MUERTO aunque
+                // FCM siga devolviéndolo. Forzamos refresh para no spammear al backend
+                // con un token que jamás va a entregar notifs.
+                let _endpointStale = false;
+                if (messaging && 'Notification' in window && Notification.permission === 'granted') {
+                    try {
+                        const _swProbe = await navigator.serviceWorker.ready.catch(function () { return null; });
+                        if (_swProbe) {
+                            const _sub = await _swProbe.pushManager.getSubscription();
+                            const _curEp = _sub ? _sub.endpoint : null;
+                            const _stEp = localStorage.getItem('fcmPushEndpoint');
+                            if (_stEp && _curEp && _stEp !== _curEp) {
+                                console.log('[FCM] post-login: endpoint cambió → token stale, forzando refresh');
+                                _endpointStale = true;
+                            } else if (!_curEp) {
+                                console.log('[FCM] post-login: sin push subscription → token stale, forzando refresh');
+                                _endpointStale = true;
+                            }
+                        }
+                    } catch (_e) { /* ignore */ }
+                }
+
+                if (_endpointStale) {
+                    // Limpiar todo y delegar a initNotifications para regenerar de cero.
+                    try { await messaging.deleteToken(); } catch (_) {}
+                    localStorage.removeItem('fcmToken');
+                    localStorage.removeItem('fcmPushEndpoint');
+                    fcmToken = null;
+                    _notifInitializing = false;
+                    const _swR = await navigator.serviceWorker.ready.catch(function () { return null; });
+                    if (_swR) await initNotifications(_swR);
+                    return;
+                }
+
+                // Enviar token cacheado al backend (sólo si la huella valida arriba pasó).
+                const sent = await sendTokenToServer(token);
+                // Refrescar token desde FCM por si rotó (token puede rotar por SW update,
+                // cambio de VAPID key, reinstalación o expiración de la suscripción push).
+                if (messaging && 'Notification' in window && Notification.permission === 'granted') {
+                    try {
+                        const swReg = await navigator.serviceWorker.ready.catch(function(e) { console.warn('[FCM] SW ready falló:', e.message); return null; });
+                        if (swReg) {
+                            let freshToken;
+                            try {
+                                freshToken = await messaging.getToken({
+                                    vapidKey: VAPID_KEY,
+                                    serviceWorkerRegistration: swReg
+                                });
+                            } catch (firstGetErr) {
+                                // La suscripción push puede estar obsoleta (ej: token inválido
+                                // por cambio de SW o PWA reinstalada). Igual que en initNotifications:
+                                // eliminamos la suscripción actual y reintentamos para obtener
+                                // un token completamente nuevo.
+                                console.warn('[FCM] ⚠️ getToken falló post-login (suscripción posiblemente obsoleta):', firstGetErr.message);
+                                console.log('[FCM] Reintentando tras deleteToken...');
+                                try { await messaging.deleteToken(); } catch (de) { console.warn('[FCM] deleteToken (retry):', de.message); }
+                                freshToken = await messaging.getToken({
+                                    vapidKey: VAPID_KEY,
+                                    serviceWorkerRegistration: swReg
+                                });
+                            }
+                            if (freshToken && freshToken !== token) {
+                                console.log('[FCM] 🔄 Token rotado detectado post-login');
+                                console.log('[FCM]   Token viejo (caché): ' + token.substring(0, 20) + '...');
+                                console.log('[FCM]   Token nuevo (Firebase): ' + freshToken.substring(0, 20) + '...');
+                                fcmToken = freshToken;
+                                localStorage.setItem('fcmToken', freshToken);
+                                localStorage.setItem('fcmTokenContext', _currentCtx);
+                                // Actualizar fingerprint del endpoint también
+                                try {
+                                    const _ns = await swReg.pushManager.getSubscription();
+                                    if (_ns && _ns.endpoint) localStorage.setItem('fcmPushEndpoint', _ns.endpoint);
+                                } catch (_) {}
+                                await sendTokenToServer(freshToken);
+                                console.log('[FCM] ✅ Token nuevo registrado correctamente en backend');
+                            } else if (freshToken) {
+                                console.log('[FCM] Token sin rotación — token en backend sigue siendo válido');
+                                // Guardar contexto si no estaba almacenado (sesión anterior sin esta lógica)
+                                if (!_storedCtx) {
+                                    localStorage.setItem('fcmTokenContext', _currentCtx);
+                                }
+                                // Persistir endpoint si por alguna razón no estaba guardado.
+                                if (!localStorage.getItem('fcmPushEndpoint')) {
+                                    try {
+                                        const _ns2 = await swReg.pushManager.getSubscription();
+                                        if (_ns2 && _ns2.endpoint) localStorage.setItem('fcmPushEndpoint', _ns2.endpoint);
+                                    } catch (_) {}
+                                }
+                            }
+                        }
+                    } catch (refreshErr) {
+                        console.warn('[FCM] ⚠️ Error en refresh de token post-login:', refreshErr.message);
+                        // El refresh falló (suscripción push probablemente revocada tras bloqueo previo).
+                        // Limpiamos el token local obsoleto para que el próximo intento (o clic en NOTIS)
+                        // pueda obtener una suscripción completamente nueva sin depender de borrar caché.
+                        localStorage.removeItem('fcmToken');
+                        localStorage.removeItem('fcmTokenContext');
+                        fcmToken = null;
+                        _notifInitializing = false;
+                        const _recoveryBtn = document.getElementById('notificationBtn');
+                        if (_recoveryBtn) {
+                            _recoveryBtn.disabled = false;
+                            _recoveryBtn.classList.remove('active');
+                            _recoveryBtn.innerHTML = '🔔 NOTIS';
+                            _recoveryBtn.title = 'Tocá para activar notificaciones';
+                        }
+                    }
+                }
+            } else {
+                // ── CASO B: Sin token en caché ───────────────────────────────────
+                // Intentar generar uno vía initNotifications
+                console.log('[FCM] No hay token en localStorage, iniciando notificaciones...');
+                const swRegC = await navigator.serviceWorker.ready.catch(function(e) { console.warn('[FCM] SW ready falló:', e.message); return null; });
+                if (!swRegC) {
+                    console.warn('[FCM] ⚠️ Service Worker no disponible — no se puede generar token FCM ahora.');
+                } else {
+                    await initNotifications(swRegC);
+                }
+            }
+        };
+
+        // ============================================
+        // REFRESH PERIÓDICO DEL TOKEN FCM (cada 24h, solo en standalone)
+        // ============================================
+        // El token FCM puede rotar entre logins (SW update, expiración de la
+        // suscripción push, reinstalación de la PWA). Sin un refresh periódico
+        // el backend puede quedar apuntando a un token muerto durante semanas.
+        // Reusamos sendFcmTokenAfterLogin que ya hace getToken + detect-rotation
+        // + re-register, y lo ejecutamos cada 24h mientras la app esté abierta.
+        // Se omite en navegador puro (no hay token FCM activo en ese contexto).
+        const FCM_REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000;
+        setInterval(function () {
+            try {
+                const standalone = window.matchMedia('(display-mode: standalone)').matches ||
+                                   window.navigator.standalone === true;
+                if (!standalone) return;
+                if (!localStorage.getItem('userToken')) return; // sin sesión: no refresh
+                if (typeof window.sendFcmTokenAfterLogin === 'function') {
+                    console.log('[FCM] Refresh periódico de token (24h)');
+                    window.sendFcmTokenAfterLogin().catch(function (e) {
+                        console.warn('[FCM] Refresh periódico falló:', e && e.message);
+                    });
+                }
+            } catch (e) {
+                console.warn('[FCM] Error en refresh periódico:', e && e.message);
+            }
+        }, FCM_REFRESH_INTERVAL_MS);
+
+        // ============================================
+        // HELPER: Mensaje de error específico según la causa real
+        // ============================================
+        function getNotificationErrorMessage() {
+            if (!('serviceWorker' in navigator)) {
+                return '⚠️ Tu navegador no soporta notificaciones push. Probá con Chrome, Firefox o Safari (sin modo privado/incógnito).';
+            }
+            if (!('Notification' in window)) {
+                return '⚠️ Tu navegador no soporta notificaciones.';
+            }
+            if (Notification.permission === 'denied') {
+                return '⚠️ Bloqueaste las notificaciones para este sitio. Habilitalas en la configuración del navegador.';
+            }
+            if (typeof firebase === 'undefined' || !firebase.messaging) {
+                // Mientras el loader sigue reintentando NO mostramos error rojo:
+                // esto es normal en redes móviles flaky y se va a resolver solo.
+                if (window.__firebaseLoadState === 'loading') {
+                    return '⏳ Cargando notificaciones, probá de nuevo en unos segundos…';
+                }
+                if (window.__firebaseLoadState === 'failed-retrying') {
+                    return '⏳ Reconectando con Firebase. Volvé a intentar en un momento.';
+                }
+                return '⚠️ No se pudieron cargar las notificaciones. Revisá tu conexión y volvé a intentar.';
+            }
+            return '⚠️ No se pudieron activar las notificaciones. Inténtalo de nuevo en unos segundos.';
+        }
+
+        // ============================================
+        // FUNCIÓN GLOBAL: Activar notificaciones manualmente
+        // ============================================
+        // Esta función permite al usuario reactivar las notificaciones
+        // si las rechazó inicialmente o si no funcionaron
+        window.enableNotifications = async function() {
+            console.log('[FCM] enableNotifications() llamado manualmente');
+
+            // Antes de hacer nada, esperar a que el SDK de Firebase esté
+            // cargado. Si los <script> estáticos fallaron al inicio, el
+            // loader (window.__firebaseReady) ya está reintentando con
+            // backoff + fallback CDN. Si el loader quedó en 'failed-retrying'
+            // (agotó el ciclo) lo pateamos manualmente con __firebaseRetryNow.
+            // Timeout extendido a 30s — usuarios en red móvil necesitan margen.
+            try {
+                if (window.__firebaseLoadState === 'failed-retrying' && typeof window.__firebaseRetryNow === 'function') {
+                    console.log('[FCM] Loader en failed-retrying — disparando retry manual...');
+                    window.__firebaseRetryNow();
+                }
+                await Promise.race([
+                    window.__firebaseReady,
+                    new Promise(function (_r, reject) {
+                        setTimeout(function () { reject(new Error('timeout esperando carga de Firebase')); }, 30000);
+                    })
+                ]);
+            } catch (e) {
+                console.error('[FCM] ❌ Carga de Firebase no completó tras 30s:', e && e.message);
+                // El loader sigue reintentando en background — el usuario sólo
+                // tiene que esperar y reintentar. Mensaje friendly, no rojo.
+                if (typeof showToast === 'function') {
+                    showToast('⏳ Notificaciones aún cargando. Volvé a tocar NOTIS en unos segundos.', 'warning');
+                }
+                // Re-disparar retry para no quedar atascado.
+                if (typeof window.__firebaseRetryNow === 'function') {
+                    window.__firebaseRetryNow();
+                }
+                return { success: false, error: 'firebase-load-pending' };
+            }
+
+            // Si firebase ya cargó pero `messaging` (variable local) aún no,
+            // inicializarla acá. Esto cubre la race condition donde el loader
+            // resolvió justo después de que _initFirebaseWhenReady terminara.
+            if (!messaging && typeof firebase !== 'undefined' && firebase.messaging) {
+                try {
+                    if (!firebase.apps || firebase.apps.length === 0) {
+                        app = firebase.initializeApp(firebaseConfig);
+                    }
+                    messaging = firebase.messaging();
+                    console.log('[FCM] ✅ messaging inicializado tras esperar a __firebaseReady');
+                } catch (e) {
+                    console.warn('[FCM] No se pudo inicializar messaging tras carga:', e.message);
+                }
+            }
+
+            try {
+                // Verificar soporte de Notifications API
+                if (!('Notification' in window)) {
+                    console.log('[FCM] ❌ API Notification no disponible en este navegador/contexto');
+                    if (typeof showToast === 'function') {
+                        showToast('⚠️ Este navegador no soporta notificaciones', 'warning');
+                    }
+                    return { success: false, error: 'API Notification no disponible' };
+                }
+
+                // Verificar si el permiso fue denegado anteriormente
+                const currentPermission = Notification.permission;
+                console.log('[FCM] Permiso actual:', currentPermission);
+
+                if (currentPermission === 'denied') {
+                    console.log('[FCM] ⚠️ El permiso fue denegado anteriormente.');
+                    if (typeof showToast === 'function') {
+                        showToast('⚠️ Notificaciones bloqueadas. Activá desde la configuración del sitio (ícono de candado arriba)', 'warning');
+                    }
+                    return { success: false, error: 'Permiso denegado. Activa desde configuración del sitio.' };
+                }
+
+                // Solicitar permiso (requiere gesto del usuario - este es el flujo correcto para iOS y Android)
+                console.log('[FCM] Solicitando permiso...');
+                let permission;
+                try {
+                    permission = await Notification.requestPermission();
+                } catch (permError) {
+                    // Algunos entornos (iOS < 16.4 standalone) pueden lanzar error
+                    console.error('[FCM] Error al solicitar permiso:', permError);
+                    if (typeof showToast === 'function') {
+                        showToast('⚠️ No se pudo solicitar permiso de notificaciones', 'warning');
+                    }
+                    return { success: false, error: permError.message };
+                }
+                console.log('[FCM] Nuevo permiso:', permission);
+
+                if (permission === 'granted') {
+                    console.log('[FCM] ✅ Permiso concedido. Obteniendo token...');
+
+                    // Guardia: si Firebase no está disponible verificar si ya hay token activo
+                    // antes de reportar un error al usuario.
+                    if (!messaging) {
+                        console.log('[FCM] messaging es null, intentando reinicializar...');
+                        if (typeof firebase !== 'undefined' && firebase.messaging) {
+                            try {
+                                if (!firebase.apps || firebase.apps.length === 0) {
+                                    app = firebase.initializeApp(firebaseConfig);
+                                }
+                                messaging = firebase.messaging();
+                                console.log('[FCM] ✅ Firebase Messaging reinicializado correctamente');
+                            } catch (reinitErr) {
+                                console.error('[FCM] ❌ Reinicialización falló:', reinitErr);
+                            }
+                        }
+                        // Si sigue siendo null después del reintento, ahí sí mostrar el error
+                        if (!messaging) {
+                            console.error('[FCM] ❌ Firebase Messaging no disponible — no se puede obtener token');
+                            // Si existe un token en localStorage el sistema puede seguir operativo
+                            // (token registrado en sesión anterior). No mostrar error en ese caso.
+                            const _existingToken = localStorage.getItem('fcmToken');
+                            if (_existingToken) {
+                                console.log('[FCM] Token existente detectado — notificaciones pueden estar activas');
+                                if (typeof showToast === 'function') {
+                                    showToast('✅ Notificaciones ya activadas', 'success');
+                                }
+                                return { success: true, token: _existingToken };
+                            }
+                            if (typeof showToast === 'function') {
+                                showToast(getNotificationErrorMessage(), 'warning');
+                            }
+                            return { success: false, error: 'Firebase Messaging no disponible' };
+                        }
+                    }
+
+                    // Borrar token anterior (incluida la suscripción push subyacente) para
+                    // forzar la creación de una suscripción nueva. Sin llamar deleteToken()
+                    // solo se borra el valor de localStorage pero la suscripción push obsoleta
+                    // permanece, y getToken() devuelve el mismo token invalidado.
+                    try {
+                        await messaging.deleteToken();
+                        console.log('[FCM] Suscripción push anterior eliminada correctamente');
+                    } catch (delErr) {
+                        console.warn('[FCM] No se pudo eliminar suscripción anterior:', delErr.message);
+                    }
+                    localStorage.removeItem('fcmToken');
+                    fcmToken = null;
+
+                    // Resetear el guard de inicialización: hemos limpiado el estado anterior
+                    // (deleteToken + localStorage), por lo que una nueva inicialización completa
+                    // es correcta y segura. Sin este reset, si había un initNotifications en
+                    // progreso (auto-init de carga de página), la llamada siguiente retornaría
+                    // inmediatamente sin obtener token, dejando el flujo bloqueado.
+                    _notifInitializing = false;
+                    if (_tokenRetryTimer) {
+                        clearTimeout(_tokenRetryTimer);
+                        _tokenRetryTimer = null;
+                    }
+
+                    // Reintentar obtener el token
+                    await initNotifications(await navigator.serviceWorker.ready.catch(function(e) { console.warn('[FCM] SW ready falló:', e.message); return null; }));
+
+                    const newToken = localStorage.getItem('fcmToken');
+                    if (newToken) {
+                        console.log('[FCM] ✅ Token obtenido correctamente');
+                        if (typeof showToast === 'function') {
+                            showToast('✅ Notificaciones activadas correctamente', 'success');
+                        }
+                        return { success: true, token: newToken };
+                    } else {
+                        console.log('[FCM] ⚠️ No se pudo obtener el token FCM');
+                        if (typeof showToast === 'function') {
+                            showToast('⚠️ Permiso concedido pero no se pudo obtener el token. Intenta de nuevo.', 'warning');
+                        }
+                        return { success: false, error: 'No se pudo obtener el token' };
+                    }
+                } else {
+                    console.log('[FCM] ❌ Permiso no concedido:', permission);
+                    if (typeof showToast === 'function') {
+                        showToast('⚠️ Permiso de notificaciones no concedido', 'warning');
+                    }
+                    return { success: false, error: 'Permiso no concedido: ' + permission };
+                }
+            } catch (err) {
+                console.error('[FCM] Error inesperado en enableNotifications:', err);
+                if (typeof showToast === 'function') {
+                    showToast('❌ Error al activar notificaciones', 'error');
+                }
+                return { success: false, error: err.message };
+            }
+        };
+        
+        // ============================================
+        // FUNCIÓN GLOBAL: Verificar estado de notificaciones (diagnóstico)
+        // Incluye: permiso, token local, token registrado en backend, entorno
+        // ============================================
+        window.checkNotificationStatus = function() {
+            const notifSupported = 'Notification' in window;
+            const permission = notifSupported ? Notification.permission : 'no soportado';
+            const token = localStorage.getItem('fcmToken');
+            const storedCtx = localStorage.getItem('fcmTokenContext');
+            const registeredInBackend = _lastRegisteredToken !== null && _lastRegisteredToken === token;
+            const isIOSDevice = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+            const isSafariBrowser = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+            const isAndroidDevice = /Android/.test(navigator.userAgent);
+            const isChromeBrowser = /Chrome/.test(navigator.userAgent) && !(/Edg\//.test(navigator.userAgent));
+            const standaloneMode = window.matchMedia('(display-mode: standalone)').matches || 
+                                 window.navigator.standalone === true;
+            const currentCtx = standaloneMode ? 'standalone' : 'browser';
+            const messagingAvailable = !!messaging;
+            // Token is for the CURRENT context (not a stale one from a different context).
+            // If storedCtx is null (legacy session), treat as mismatch to avoid false positives.
+            const tokenContextMatch = storedCtx !== null && storedCtx === currentCtx;
+            
+            console.log('=== ESTADO DE NOTIFICACIONES ===');
+            console.log('Permiso:', permission);
+            console.log('Token FCM local:', token ? 'Sí (' + token.substring(0, 30) + '...)' : 'No');
+            console.log('Token registrado en backend:', registeredInBackend ? 'Sí' : 'No');
+            console.log('Token contexto almacenado:', storedCtx, '| contexto actual:', currentCtx, '| coincide:', tokenContextMatch);
+            console.log('Firebase Messaging:', messagingAvailable ? 'Disponible' : 'No disponible');
+            console.log('iOS:', isIOSDevice ? 'Sí' : 'No');
+            console.log('Android:', isAndroidDevice ? 'Sí' : 'No');
+            console.log('Chrome:', isChromeBrowser ? 'Sí' : 'No');
+            console.log('Safari:', isSafariBrowser ? 'Sí' : 'No');
+            console.log('App instalada (standalone):', standaloneMode ? 'Sí' : 'No');
+            console.log('=================================');
+            
+            return {
+                permission: permission,
+                hasToken: !!token,
+                tokenRegisteredInBackend: registeredInBackend,
+                tokenContextMatch: tokenContextMatch,
+                tokenPreview: token ? token.substring(0, 30) + '...' : null,
+                messagingAvailable: messagingAvailable,
+                isIOS: isIOSDevice,
+                isAndroid: isAndroidDevice,
+                isChrome: isChromeBrowser,
+                isSafari: isSafariBrowser,
+                isStandalone: standaloneMode
+            };
+        };
+        
+        // ============================================
+        // CARTEL IN-APP (foreground PWA)
+        // Muestra un banner animado cuando llega una notificación con la app
+        // abierta. Se dispara desde el evento socket 'admin_notification' y
+        // como backup desde messaging.onMessage (FCM en foreground).
+        // ============================================
+        function _escapeNotifText(s) {
+            return String(s == null ? '' : s)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
+        function showInAppNotification(title, body, icon, data) {
+            try {
+                const banner = document.createElement('div');
+                banner.className = 'in-app-notification-banner';
+                const iconUrl = _escapeNotifText(icon || '/icons/icon-192x192.png');
+                banner.innerHTML =
+                    '<div class="notif-banner-content">' +
+                        '<img src="' + iconUrl + '" alt="" class="notif-banner-icon" onerror="this.style.display=\'none\'">' +
+                        '<div class="notif-banner-text">' +
+                            '<div class="notif-banner-title">' + _escapeNotifText(title || 'Notificación') + '</div>' +
+                            '<div class="notif-banner-body">' + _escapeNotifText(body || '') + '</div>' +
+                        '</div>' +
+                        '<button class="notif-banner-close" aria-label="Cerrar">&times;</button>' +
+                    '</div>';
+
+                document.body.appendChild(banner);
+                requestAnimationFrame(function () { banner.classList.add('show'); });
+
+                // Sonido suave (opcional, ignorar si el browser bloquea)
+                try {
+                    const audio = new Audio('data:audio/wav;base64,UklGRl9vT19XQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQ==');
+                    audio.volume = 0.3;
+                    const p = audio.play();
+                    if (p && typeof p.catch === 'function') p.catch(function () {});
+                } catch (e) { /* ignore */ }
+
+                let autoCloseTimer = null;
+                function closeBanner() {
+                    if (autoCloseTimer) { clearTimeout(autoCloseTimer); autoCloseTimer = null; }
+                    banner.classList.remove('show');
+                    setTimeout(function () { try { banner.remove(); } catch (e) {} }, 400);
+                }
+
+                const content = banner.querySelector('.notif-banner-content');
+                if (content) {
+                    content.addEventListener('click', function (e) {
+                        if (e.target && typeof e.target.closest === 'function' && e.target.closest('.notif-banner-close')) return;
+                        try {
+                            if (data && data.url) {
+                                window.location.href = data.url;
+                            }
+                        } catch (navErr) { /* ignore */ }
+                        closeBanner();
+                    });
+                }
+                const closeBtn = banner.querySelector('.notif-banner-close');
+                if (closeBtn) {
+                    closeBtn.addEventListener('click', function (e) {
+                        e.stopPropagation();
+                        closeBanner();
+                    });
+                }
+                autoCloseTimer = setTimeout(closeBanner, 6000);
+            } catch (err) {
+                console.warn('[NOTIF] No se pudo mostrar cartel in-app:', err);
+            }
+        }
+
+        // Listener socket: notificaciones in-app cuando la app está abierta y conectada.
+        // El socket se inicializa en /js/socket.js (VIP.state.socket). Reintentamos
+        // hasta que esté disponible para no perder el binding, y dejamos de
+        // reintentar una vez registrado.
+        (function bindAdminNotificationSocket() {
+            let attempts = 0;
+            const maxAttempts = 40; // ~20s de espera inicial
+            let boundSocket = null;
+            function tryBind() {
+                attempts++;
+                try {
+                    const sock = (window.VIP && window.VIP.state && window.VIP.state.socket) || null;
+                    if (sock && sock !== boundSocket) {
+                        // Quitar listener anterior por si el socket se recreó
+                        try { sock.off && sock.off('admin_notification'); } catch (e) {}
+                        sock.on('admin_notification', function (data) {
+                            try {
+                                console.log('[NOTIF] Recibida por socket:', data);
+                                showInAppNotification(
+                                    data && data.title,
+                                    data && data.body,
+                                    data && data.icon,
+                                    (data && data.data) || {}
+                                );
+                            } catch (e) {
+                                console.warn('[NOTIF] Error manejando admin_notification:', e);
+                            }
+                        });
+                        boundSocket = sock;
+                        console.log('[NOTIF] Listener admin_notification registrado en socket');
+                        return; // ya enganchado, no seguir reintentando
+                    }
+                } catch (e) { /* ignore */ }
+                if (attempts < maxAttempts) {
+                    setTimeout(tryBind, 500);
+                }
+            }
+            tryBind();
+        })();
+
+        // ============================================
+        // MANEJAR NOTIFICACIONES EN PRIMER PLANO
+        // Null guard: solo registrar si Firebase Messaging está disponible.
+        // Sin este guard, si messaging es null el script se rompe y corta
+        // funciones posteriores (chat, login, etc.).
+        // ============================================
+        // El registro se difiere hasta que Firebase termine de cargar (puede
+        // venir tarde si los <script> de gstatic fallaron y el loader tuvo
+        // que reintentar). Sin esta espera el handler de foreground nunca
+        // queda registrado en dispositivos con red móvil flaky.
+        function _registerForegroundOnMessage() {
+            if (!messaging) {
+                console.log('[FCM] Firebase Messaging no disponible - onMessage no registrado');
+                return;
+            }
+            messaging.onMessage(function(payload) {
+                console.log('[FCM] Notificación recibida en primer plano:', payload);
+
+                const notif = payload.notification || {};
+                const notificationTitle = notif.title || 'Sala de Juegos';
+                const notifBody = notif.body || 'Nueva notificación';
+
+                if (document.visibilityState !== 'visible') {
+                    // App en background / minimizada: notificación nativa.
+                    try {
+                        new Notification(notificationTitle, {
+                            body: notifBody,
+                            icon: notif.icon || '/icons/icon-192x192.png',
+                            badge: '/icons/icon-72x72.png',
+                            tag: payload.data?.tag || 'default'
+                        });
+                    } catch (e) {
+                        console.log('[FCM] No se pudo mostrar notificación nativa:', e.message);
+                    }
+                } else {
+                    // App visible en primer plano: SOLO el banner in-app.
+                    // Antes mostrábamos toast + Notification nativa + banner por el
+                    // mismo push (3 alertas para 1 mensaje). Ahora unificado al
+                    // banner in-app, que es la UX consistente con el evento socket
+                    // 'admin_notification'. El sonido lo dispara el handler de socket
+                    // si llega por esa vía; si llegó por FCM (sin socket), el banner
+                    // alcanza para alertar visualmente.
+                    try {
+                        if (typeof showInAppNotification === 'function') {
+                            showInAppNotification(
+                                notificationTitle,
+                                notifBody,
+                                notif.icon || (payload.data && payload.data.icon),
+                                payload.data || {}
+                            );
+                        } else if (typeof showToast === 'function') {
+                            // Fallback si el banner no estuviera disponible
+                            showToast('🔔 ' + notificationTitle + ': ' + notifBody, 'info');
+                        }
+                    } catch (bannerErr) {
+                        console.warn('[FCM] No se pudo mostrar cartel in-app desde onMessage:', bannerErr);
+                    }
+                }
+            });
+            console.log('[FCM] ✅ onMessage handler registrado');
+        }
+
+        // Esperar a que Firebase cargue (puede demorar si tuvo que reintentar)
+        // antes de registrar el handler de primer plano.
+        if (window.__firebaseReady && typeof window.__firebaseReady.then === 'function') {
+            window.__firebaseReady
+                .then(function () {
+                    if (!messaging && typeof firebase !== 'undefined' && firebase.messaging) {
+                        try {
+                            if (!firebase.apps || firebase.apps.length === 0) {
+                                app = firebase.initializeApp(firebaseConfig);
+                            }
+                            messaging = firebase.messaging();
+                        } catch (e) {
+                            console.warn('[FCM] Init de messaging para onMessage falló:', e.message);
+                        }
+                    }
+                    _registerForegroundOnMessage();
+                })
+                .catch(function (e) {
+                    console.warn('[FCM] No se registra onMessage: Firebase no cargó:', e && e.message);
+                });
+        } else {
+            _registerForegroundOnMessage();
+        }
+
+        // ============================================
+        // BOTÓN DE INSTALACIÓN PWA
+        // ============================================
+        
+        // Escuchar evento beforeinstallprompt (Android/Chrome)
+        window.addEventListener('beforeinstallprompt', (e) => {
+            console.log('[PWA] Evento beforeinstallprompt detectado');
+            // No mostrar si ya estamos en modo standalone (app ya instalada)
+            if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone) {
+                console.log('[PWA] Ya en standalone, ignorando beforeinstallprompt');
+                return;
+            }
+            // No llamar e.preventDefault(): dejar que Chrome muestre la mini-barra
+            // nativa de instalación (que crea un WebAPK real en Android).
+            // Guardamos el evento para que el botón personalizado también pueda usarlo.
+            window.deferredPrompt = e;
+            // Mostrar botón de instalación
+            showInstallButton();
+        });
+        
+        // Detectar cuando la app se instala
+        window.addEventListener('appinstalled', (evt) => {
+            console.log('[PWA] App instalada');
+            window.deferredPrompt = null;
+            hideInstallButton();
+            showToast('✅ App instalada correctamente', 'success');
+        });
+        
+        // ============================================
+        // MOSTRAR BOTÓN DE INSTALACIÓN
+        // ============================================
+        function showInstallButton() {
+            // Crear botón si no existe
+            let installBtn = document.getElementById('pwaInstallButton');
+            if (!installBtn) {
+                installBtn = document.createElement('button');
+                installBtn.id = 'pwaInstallButton';
+                installBtn.className = 'pwa-install-btn';
+                installBtn.innerHTML = '📱 Instalar App';
+                document.body.appendChild(installBtn);
+                
+                // Agregar evento click
+                installBtn.addEventListener('click', handleInstallClick);
+            }
+            
+            // Mostrar el botón
+            installBtn.style.display = 'flex';
+            
+            // Si es iOS, mostrar instrucciones especiales
+            if (isIOS) {
+                installBtn.innerHTML = '📱 Agregar a Inicio';
+            }
+        }
+        
+        // ============================================
+        // OCULTAR BOTÓN DE INSTALACIÓN
+        // ============================================
+        function hideInstallButton() {
+            const installBtn = document.getElementById('pwaInstallButton');
+            if (installBtn) {
+                installBtn.style.display = 'none';
+            }
+        }
+        
+        // ============================================
+        // MANEJAR CLICK EN BOTÓN DE INSTALACIÓN
+        // ============================================
+        async function handleInstallClick() {
+            if (isIOS) {
+                // Mostrar instrucciones para iOS
+                showIOSInstallInstructions();
+            } else if (window.deferredPrompt) {
+                // Android/Chrome: Mostrar prompt de instalación
+                window.deferredPrompt.prompt();
+                const { outcome } = await window.deferredPrompt.userChoice;
+                console.log('[PWA] Resultado de instalación:', outcome);
+                window.deferredPrompt = null;
+            } else {
+                // Si no hay prompt disponible, mostrar instrucciones para Android
+                showAndroidInstallInstructions();
+            }
+        }
+        
+        // ============================================
+        // INSTRUCCIONES PARA ANDROID
+        // ============================================
+        function showAndroidInstallInstructions() {
+            const modal = document.createElement('div');
+            modal.className = 'ios-install-modal';
+            modal.innerHTML = `
+                <div class="ios-install-content">
+                    <h3>📱 Instalar App en Android</h3>
+                    <p>Para instalar esta app en tu celular:</p>
+                    <ol>
+                        <li>Presiona el botón <strong>⋮</strong> (tres puntos) en Chrome</li>
+                        <li>Selecciona <strong>"Agregar a pantalla de inicio"</strong> o <strong>"Instalar app"</strong></li>
+                        <li>Presiona <strong>"Agregar"</strong> o <strong>"Instalar"</strong></li>
+                    </ol>
+                    <p style="margin-top: 15px; font-size: 14px; color: #888;">
+                        💡 También puedes buscar el ícono de instalación en la barra de direcciones
+                    </p>
+                    <button onclick="this.closest('.ios-install-modal').remove()" class="btn btn-primary">Entendido</button>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        }
+        
+        // ============================================
+        // INSTRUCCIONES PARA iOS
+        // ============================================
+        function showIOSInstallInstructions() {
+            const modal = document.createElement('div');
+            modal.className = 'ios-install-modal';
+            modal.innerHTML = `
+                <div class="ios-install-content">
+                    <h3>📱 Agregar a Pantalla de Inicio</h3>
+                    <p>Para instalar esta app en tu iPhone/iPad:</p>
+                    <ol>
+                        <li>Presiona el botón <strong>Compartir</strong> <span style="font-size: 24px;">⬆️</span> en Safari</li>
+                        <li>Desplázate hacia abajo y selecciona <strong>"Agregar a Pantalla de Inicio"</strong></li>
+                        <li>Presiona <strong>"Agregar"</strong> en la esquina superior derecha</li>
+                    </ol>
+                    <button onclick="this.closest('.ios-install-modal').remove()" class="btn btn-primary">Entendido</button>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        }
+        
+        // ============================================
+        // INSTRUCCIONES GENERALES
+        // ============================================
+        function showGenericInstallInstructions() {
+            showToast('📱 Para instalar: usa el menú del navegador y selecciona "Agregar a pantalla de inicio"', 'info');
+        }
+        
+        // ============================================
+        // VERIFICAR SI YA ESTÁ INSTALADA
+        // ============================================
+        if (isStandalone) {
+            console.log('[PWA] App ya está instalada');
+            hideInstallButton();
+        } else {
+            // Mostrar botón inmediatamente en móviles (tanto iOS como Android)
+            if (isIOS || isAndroid) {
+                console.log('[PWA] Dispositivo móvil detectado, mostrando botón');
+                showInstallButton();
+            }
+            // Para desktop, el botón no se muestra
+        }
+        
+        // ============================================
+        // ESTILOS CSS PARA BOTÓN PWA
+        // ============================================
+        const pwaStyles = document.createElement('style');
+        pwaStyles.textContent = `
+            .pwa-install-btn {
+                position: fixed;
+                bottom: 20px;
+                right: 20px;
+                background: linear-gradient(135deg, #d4af37 0%, #00cc6a 100%);
+                color: #000;
+                border: none;
+                border-radius: 50px;
+                padding: 15px 25px;
+                font-size: 16px;
+                font-weight: bold;
+                cursor: pointer;
+                box-shadow: 0 4px 15px rgba(212, 175, 55, 0.4);
+                z-index: 9999;
+                display: none;
+                align-items: center;
+                gap: 8px;
+                animation: slideUp 0.3s ease;
+            }
+            
+            @keyframes slideUp {
+                from { transform: translateY(100px); opacity: 0; }
+                to { transform: translateY(0); opacity: 1; }
+            }
+            
+            .pwa-install-btn:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 6px 20px rgba(212, 175, 55, 0.6);
+            }
+            
+            .ios-install-modal {
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0, 0, 0, 0.8);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                z-index: 10000;
+                padding: 20px;
+            }
+            
+            .ios-install-content {
+                background: linear-gradient(135deg, #1a0033 0%, #0a0015 100%);
+                border: 2px solid #d4af37;
+                border-radius: 20px;
+                padding: 30px;
+                max-width: 400px;
+                text-align: center;
+                color: #fff;
+            }
+            
+            .ios-install-content h3 {
+                color: #d4af37;
+                margin-bottom: 15px;
+                font-size: 1.5em;
+            }
+            
+            .ios-install-content ol {
+                text-align: left;
+                margin: 20px 0;
+                padding-left: 20px;
+                line-height: 1.8;
+            }
+            
+            .ios-install-content li {
+                margin-bottom: 10px;
+            }
+            
+            .ios-install-content .btn {
+                margin-top: 15px;
+            }
+        `;
+        document.head.appendChild(pwaStyles);
+        
+        // Botón de notificaciones: solo visible cuando la app está instalada como PWA (standalone).
+        // En navegador normal no se muestra para no generar estados inconsistentes.
+        const notificationBtn = document.getElementById('notificationBtn');
+        console.log('[FCM] Buscando botón notificationBtn:', notificationBtn);
+        if (notificationBtn) {
+            const standaloneMode = window.matchMedia('(display-mode: standalone)').matches ||
+                                   window.navigator.standalone === true;
+            // Solo mostrar en modo standalone (PWA instalada). En browser siempre oculto.
+            if (standaloneMode) {
+                notificationBtn.style.setProperty('display', 'inline-flex', 'important');
+            } else {
+                notificationBtn.style.display = 'none';
+            }
+            console.log('[FCM] NOTIS visible:', standaloneMode, '(standalone)');
+
+            // Click: solicitar permiso si aún no fue concedido y actualizar estado del botón.
+            // Diseñado para ser simple y sin efectos secundarios que rompan el flujo.
+            notificationBtn.addEventListener('click', async () => {
+                if (notificationBtn.disabled) return; // ya activado o procesando
+                console.log('[FCM] Botón de notificaciones clickeado');
+
+                // Si Firebase aún no terminó de cargar, disparar retry y avisar friendly
+                // (no rojo). El usuario puede volver a tocar en unos segundos.
+                if (window.__firebaseLoadState !== 'ready') {
+                    if (typeof window.__firebaseRetryNow === 'function') {
+                        window.__firebaseRetryNow();
+                    }
+                    if (typeof showToast === 'function') {
+                        showToast('⏳ Cargando Firebase... probá de nuevo en unos segundos.', 'warning');
+                    }
+                    notificationBtn.innerHTML = '⏳ Cargando…';
+                    setTimeout(function () {
+                        if (window.__firebaseLoadState === 'ready') {
+                            notificationBtn.innerHTML = '🔔 NOTIS';
+                        } else {
+                            notificationBtn.innerHTML = '🔔 NOTIS';
+                        }
+                        notificationBtn.disabled = false;
+                    }, 3000);
+                    return;
+                }
+
+                // iOS sin soporte de push: mostrar guía de instalación
+                if (isIOS && !messaging) {
+                    if (typeof showToast === 'function') {
+                        showToast('⚠️ Tu versión de iOS no soporta notificaciones push. Necesitás iOS 16.4+.', 'warning');
+                    }
+                    return;
+                }
+
+                notificationBtn.dataset.busy = '1';
+                notificationBtn.innerHTML = '⏳ ...';
+                notificationBtn.disabled = true;
+                try {
+                    const result = await enableNotifications();
+                    console.log('[FCM] enableNotifications result:', result && result.success ? 'success' : (result && result.error ? result.error : 'no result'));
+                    // Si quedó bloqueado, abrir modal con instrucciones específicas para PWA
+                    const _newPerm = ('Notification' in window) ? Notification.permission : null;
+                    if (_newPerm === 'denied') {
+                        const _modal = document.getElementById('notifBlockedModal');
+                        if (_modal) _modal.style.display = 'flex';
+                    }
+                } catch (err) {
+                    console.error('[FCM] Error en click de NOTIS:', err);
+                }
+                notificationBtn.dataset.busy = '0';
+                // Delegar el render final a la función reactiva centralizada
+                if (typeof window._updateNotisButton === 'function') {
+                    window._updateNotisButton();
+                }
+                try { window.dispatchEvent(new Event('fcm-token-changed')); } catch (_) {}
+            });
+            console.log('[FCM] ✅ Botón de notificaciones configurado');
+
+            // ============================================
+            // ESTADO REACTIVO DEL BOTÓN NOTIS
+            // ============================================
+            // Una sola función centraliza el estado del botón. Se llama:
+            //   - Al inicio (estado inicial)
+            //   - Cuando Firebase termina de cargar
+            //   - Cuando cambia Notification.permission (Permissions API change event)
+            //   - Cuando se obtiene/borra un token (window event 'fcm-token-changed')
+            //   - Cada 4s como red de seguridad (cubre Android Chrome donde
+            //     Permissions.query no siempre dispara change events)
+            //
+            // Resultado: el usuario nunca tiene que tocar NOTIS para que el
+            // estado del botón refleje la realidad. Si las notifs funcionan,
+            // el botón se pinta verde solo. Si están bloqueadas, rojo solo.
+            window._updateNotisButton = function () {
+                try {
+                    if (!notificationBtn) return;
+                    if (notificationBtn.dataset.busy === '1') return; // no pisar mid-click
+                    const perm = ('Notification' in window) ? Notification.permission : 'default';
+                    const tok = localStorage.getItem('fcmToken');
+                    const standalone = window.matchMedia('(display-mode: standalone)').matches ||
+                                       window.navigator.standalone === true;
+                    const fbReady = window.__firebaseLoadState === 'ready';
+
+                    // Solo en standalone se muestra el botón
+                    if (!standalone) {
+                        notificationBtn.style.display = 'none';
+                        return;
+                    }
+                    notificationBtn.style.setProperty('display', 'inline-flex', 'important');
+
+                    // Modo compacto: la primera vez que el usuario ve un estado terminal
+                    // (activadas / bloqueadas) se muestra el texto completo y se marca en
+                    // localStorage. Próximas cargas ya muestran solo el emoji para no
+                    // tapar el resto del menú.
+                    var _seenGranted = false, _seenDenied = false;
+                    try {
+                        _seenGranted = localStorage.getItem('notisLabelSeen:granted') === '1';
+                        _seenDenied  = localStorage.getItem('notisLabelSeen:denied')  === '1';
+                    } catch (_) {}
+
+                    if (perm === 'denied') {
+                        notificationBtn.classList.remove('active');
+                        notificationBtn.classList.add('blocked');
+                        if (_seenDenied) {
+                            notificationBtn.innerHTML = '🔕';
+                            notificationBtn.classList.add('compact');
+                            notificationBtn.title = 'Notificaciones bloqueadas. Tocá para ver cómo activarlas.';
+                        } else {
+                            notificationBtn.innerHTML = '🔕 NOTIS BLOQUEADAS';
+                            notificationBtn.classList.remove('compact');
+                            notificationBtn.title = 'Bloqueadas. Tocá el botón para ver cómo activarlas (mantené presionado el ícono de la app → Información → Notificaciones, o desinstalá y reinstalá la app).';
+                            try { localStorage.setItem('notisLabelSeen:denied', '1'); } catch (_) {}
+                        }
+                        notificationBtn.disabled = false;
+                        return;
+                    }
+                    if (perm === 'granted' && tok) {
+                        notificationBtn.classList.remove('blocked');
+                        notificationBtn.classList.add('active');
+                        if (_seenGranted) {
+                            notificationBtn.innerHTML = '🔔';
+                            notificationBtn.classList.add('compact');
+                            notificationBtn.title = 'Notificaciones activadas ✅ (tocá para renovar si no recibís)';
+                        } else {
+                            notificationBtn.innerHTML = '🔔 NOTIS ACTIVADAS';
+                            notificationBtn.classList.remove('compact');
+                            notificationBtn.title = 'Notificaciones activadas ✅ (tocá para renovar si no recibís)';
+                            try { localStorage.setItem('notisLabelSeen:granted', '1'); } catch (_) {}
+                        }
+                        notificationBtn.disabled = false;
+                        return;
+                    }
+                    // permiso default o granted sin token todavía
+                    notificationBtn.classList.remove('blocked');
+                    notificationBtn.classList.remove('active');
+                    notificationBtn.classList.remove('compact');
+                    if (!fbReady) {
+                        notificationBtn.innerHTML = '⏳ Cargando…';
+                        notificationBtn.title = 'Esperando que Firebase termine de cargar...';
+                    } else {
+                        notificationBtn.innerHTML = '🔔 NOTIS';
+                        notificationBtn.title = 'Tocá para activar notificaciones';
+                    }
+                    notificationBtn.disabled = false;
+                } catch (e) {
+                    console.warn('[FCM] _updateNotisButton falló:', e && e.message);
+                }
+            };
+
+            // 1) Estado inicial
+            window._updateNotisButton();
+
+            // 2) Suscripción a cambios de permiso vía Permissions API
+            try {
+                if (navigator.permissions && navigator.permissions.query) {
+                    navigator.permissions.query({ name: 'notifications' }).then(function (status) {
+                        status.addEventListener('change', function () {
+                            console.log('[FCM] Permission change detectado:', status.state);
+                            window._updateNotisButton();
+                            // Si el usuario acaba de conceder permiso desde el ícono de candado,
+                            // disparar getToken automáticamente — sin que tenga que tocar NOTIS.
+                            if (status.state === 'granted' && !localStorage.getItem('fcmToken')) {
+                                navigator.serviceWorker.ready.then(function (swReg) {
+                                    if (swReg && typeof initNotifications === 'function') {
+                                        initNotifications(swReg);
+                                    }
+                                });
+                            }
+                        });
+                    }).catch(function (e) {
+                        console.warn('[FCM] Permissions.query no soportado:', e && e.message);
+                    });
+                }
+            } catch (e) { /* Permissions API no soportado */ }
+
+            // 3) Auto-update tras carga de Firebase
+            if (window.__firebaseReady && typeof window.__firebaseReady.then === 'function') {
+                window.__firebaseReady.then(function () {
+                    setTimeout(window._updateNotisButton, 1200);
+                    setTimeout(window._updateNotisButton, 3000);
+                });
+            }
+
+            // 4) Polling de seguridad cada 4s (cubre cambios sin event)
+            setInterval(window._updateNotisButton, 4000);
+
+            // 5) Listener de evento custom para que initNotifications/enableNotifications
+            //    notifiquen actualización inmediata.
+            window.addEventListener('fcm-token-changed', window._updateNotisButton);
+        } else {
+            console.log('[FCM] ❌ Botón notificationBtn no encontrado en el DOM');
+        }
+        
+        // Debug: Verificar elementos del header
+        console.log('[PWA] Debug - header-right:', document.querySelector('.header-right'));
+        console.log('[PWA] Debug - Todos los botones:', document.querySelectorAll('.header-right button'));
+        
+        // ============================================
+        // BANNER + MODAL DE NOTIFICACIONES (reactivo)
+        // ============================================
+        // Cartel arriba del chat que motiva al usuario a aceptar las
+        // notificaciones. Cambia de color/contenido según el estado:
+        //   - permission 'default' (no decidió todavía): banner morado con
+        //     "Activar". Permite cerrar por sesión (sessionStorage).
+        //   - permission 'denied' (bloqueó): banner rojo con "Cómo activar"
+        //     que abre el modal de instrucciones (sin opción de cerrar
+        //     forever — sigue mostrándose hasta que activen).
+        //   - permission 'granted' (aceptó): banner oculto.
+        const notifBannerActivate = document.getElementById('notifBannerActivate');
+        const notifBannerClose = document.getElementById('notifBannerClose');
+        const notifBlockedModalClose = document.getElementById('notifBlockedModalClose');
+
+        function _updateNotifBanner() {
+            try {
+                const banner = document.getElementById('notifBanner');
+                if (!banner) return;
+                const standalone = window.matchMedia('(display-mode: standalone)').matches ||
+                                   window.navigator.standalone === true;
+                const perm = ('Notification' in window) ? Notification.permission : 'default';
+                const tok = localStorage.getItem('fcmToken');
+                const dismissedThisSession = sessionStorage.getItem('notifBannerDismissedSession') === '1';
+
+                // En navegador puro: no molestar (el flujo PWA es la prioridad).
+                if (!standalone) {
+                    banner.style.display = 'none';
+                    return;
+                }
+                // Si ya tiene permiso y token: ocultar (todo OK).
+                if (perm === 'granted' && tok) {
+                    banner.style.display = 'none';
+                    return;
+                }
+
+                const iconEl = document.getElementById('notifBannerIcon');
+                const textEl = document.getElementById('notifBannerText');
+                if (perm === 'denied') {
+                    // BLOQUEADO: rojo, sin opción de cerrar (volvemos a mostrar siempre).
+                    banner.style.background = 'linear-gradient(135deg, #dc2626 0%, #f87171 100%)';
+                    banner.style.boxShadow = '0 4px 15px rgba(220,38,38,.5)';
+                    if (iconEl) iconEl.textContent = '🔕';
+                    if (textEl) textEl.innerHTML = '<strong>Notificaciones bloqueadas.</strong> Te perdés regalos, bonus y avisos. Tocá "Cómo activar".';
+                    if (notifBannerActivate) {
+                        notifBannerActivate.textContent = '🛠️ Cómo activar';
+                        notifBannerActivate.style.color = '#dc2626';
+                    }
+                    if (notifBannerClose) notifBannerClose.style.display = 'none';
+                    banner.style.display = '';
+                    return;
+                }
+                // permission === 'default' (todavía no preguntó / o granted sin token aún)
+                if (dismissedThisSession) {
+                    banner.style.display = 'none';
+                    return;
+                }
+                banner.style.background = 'linear-gradient(135deg, #6a0dad 0%, #9d4edd 100%)';
+                banner.style.boxShadow = '0 4px 15px rgba(157,78,221,.5)';
+                if (iconEl) iconEl.textContent = '🔔';
+                if (textEl) textEl.innerHTML = '<strong>¡Activá las notificaciones!</strong> Recibí avisos de cargas, retiros, bonus y soporte 24/7.';
+                if (notifBannerActivate) {
+                    notifBannerActivate.textContent = '🔔 Activar';
+                    notifBannerActivate.style.color = '#6a0dad';
+                }
+                if (notifBannerClose) notifBannerClose.style.display = '';
+                banner.style.display = '';
+            } catch (e) {
+                console.warn('[FCM] _updateNotifBanner falló:', e && e.message);
+            }
+        }
+        window._updateNotifBanner = _updateNotifBanner;
+
+        if (notifBannerActivate) {
+            notifBannerActivate.addEventListener('click', () => {
+                const perm = ('Notification' in window) ? Notification.permission : 'default';
+                if (perm === 'denied') {
+                    // Mostrar modal con instrucciones específicas para PWA
+                    const _modal = document.getElementById('notifBlockedModal');
+                    if (_modal) _modal.style.display = 'flex';
+                    return;
+                }
+                if (typeof enableNotifications === 'function') {
+                    enableNotifications();
+                } else {
+                    console.warn('[FCM] enableNotifications no disponible');
+                }
+            });
+        }
+
+        if (notifBannerClose) {
+            notifBannerClose.addEventListener('click', () => {
+                const banner = document.getElementById('notifBanner');
+                if (banner) banner.style.display = 'none';
+                // Sólo dismiss por sesión: si abre la app de nuevo va a volver a verlo.
+                // No usamos localStorage aquí porque el usuario quiere insistencia.
+                try { sessionStorage.setItem('notifBannerDismissedSession', '1'); } catch(e) {}
+            });
+        }
+
+        if (notifBlockedModalClose) {
+            notifBlockedModalClose.addEventListener('click', () => {
+                const m = document.getElementById('notifBlockedModal');
+                if (m) m.style.display = 'none';
+            });
+        }
+        // Click fuera del contenido del modal también cierra
+        const _blockedModal = document.getElementById('notifBlockedModal');
+        if (_blockedModal) {
+            _blockedModal.addEventListener('click', (e) => {
+                if (e.target === _blockedModal) _blockedModal.style.display = 'none';
+            });
+        }
+
+        // Render inicial + reactivo a cambios de permiso/token/Firebase ready
+        _updateNotifBanner();
+        window.addEventListener('fcm-token-changed', _updateNotifBanner);
+        if (window.__firebaseReady && typeof window.__firebaseReady.then === 'function') {
+            window.__firebaseReady.then(function () { setTimeout(_updateNotifBanner, 1500); });
+        }
+        try {
+            if (navigator.permissions && navigator.permissions.query) {
+                navigator.permissions.query({ name: 'notifications' }).then(function (s) {
+                    s.addEventListener('change', _updateNotifBanner);
+                }).catch(function () {});
+            }
+        } catch (_) {}
+        // Polling de seguridad
+        setInterval(_updateNotifBanner, 4000);
+
+        // Bug 3 fix: ocultar el botón NOTIS si el navegador no soporta Service Worker
+        if (!('serviceWorker' in navigator)) {
+            const notifBtnNoSW = document.getElementById('notificationBtn');
+            if (notifBtnNoSW) {
+                notifBtnNoSW.style.display = 'none';
+                console.log('[FCM] Botón NOTIS ocultado — Service Worker no disponible');
+            }
+        }
+
+        console.log('[PWA] Firebase y PWA inicializados correctamente');
+    </script>
+    
+    <!-- Lightbox para imágenes -->
+    <div id="lightbox" class="lightbox" onclick="closeLightbox(event)">
+        <button class="lightbox-close" onclick="closeLightbox(event)">✕</button>
+        <img id="lightboxImage" src="" alt="Imagen ampliada">
+    </div>
+
+    <!-- Modal de Referidos -->
+    <div id="referralModal" class="modal hidden" onclick="if(event.target===this)hideModal('referralModal')">
+        <div class="modal-content" style="position:relative;max-width:500px;max-height:90vh;overflow-y:auto;">
+            <button onclick="hideModal('referralModal')" style="position:absolute;top:15px;right:15px;background:none;border:none;color:#888;font-size:24px;cursor:pointer;z-index:10;">✕</button>
+            <div class="modal-header">
+                <h2>🤝 Mis Referidos</h2>
+                <p>Compartí tu código y ganá una comisión mensual sobre la actividad de tus referidos</p>
+            </div>
+            <div id="referralContent">
+                <!-- Código y link -->
+                <div style="background:rgba(255,255,255,0.05);border:1px solid #d4af37;border-radius:12px;padding:16px;margin-bottom:16px;">
+                    <div style="margin-bottom:12px;">
+                        <span style="color:#b0b0b0;font-size:11px;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:6px;">Tu código de referido</span>
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <span id="myReferralCode" style="font-size:24px;font-weight:bold;color:#d4af37;letter-spacing:5px;">—</span>
+                            <button onclick="copyReferralCode()" style="background:rgba(212,175,55,0.2);border:1px solid #d4af37;color:#d4af37;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px;">📋 Copiar</button>
+                        </div>
+                    </div>
+                    <div>
+                        <span style="color:#b0b0b0;font-size:11px;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:6px;">Tu link de referido</span>
+                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                            <span id="myReferralLink" style="font-size:11px;color:#00ff88;word-break:break-all;flex:1;min-width:0;">—</span>
+                            <button onclick="copyReferralLink()" style="background:rgba(0,255,136,0.1);border:1px solid #00ff88;color:#00ff88;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px;white-space:nowrap;flex-shrink:0;">📋 Copiar</button>
+                        </div>
+                    </div>
+                </div>
+                <!-- Stats (4 tarjetas 2x2) -->
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;">
+                    <div style="background:rgba(0,255,136,0.05);border:1px solid rgba(0,255,136,0.2);border-radius:10px;padding:12px;text-align:center;">
+                        <span style="font-size:22px;font-weight:bold;color:#00ff88;" id="referralActiveCount">0</span>
+                        <span style="display:block;font-size:11px;color:#b0b0b0;margin-top:4px;">Referidos activos</span>
+                    </div>
+                    <div style="background:rgba(212,175,55,0.05);border:1px solid rgba(212,175,55,0.2);border-radius:10px;padding:12px;text-align:center;">
+                        <span style="font-size:22px;font-weight:bold;color:#d4af37;" id="referralHistoricalTotal">$0</span>
+                        <span style="display:block;font-size:11px;color:#b0b0b0;margin-top:4px;">Total acreditado</span>
+                    </div>
+                    <div style="background:rgba(247,147,30,0.05);border:1px solid rgba(247,147,30,0.2);border-radius:10px;padding:12px;text-align:center;">
+                        <span style="font-size:22px;font-weight:bold;color:#f7931e;" id="referralPendingAmount">$0</span>
+                        <span style="display:block;font-size:11px;color:#b0b0b0;margin-top:4px;">Pendiente del período</span>
+                    </div>
+                    <div style="background:rgba(136,136,136,0.05);border:1px solid rgba(136,136,136,0.2);border-radius:10px;padding:12px;text-align:center;">
+                        <span style="font-size:16px;font-weight:bold;color:#b0b0b0;" id="referralLastPayoutAmount">—</span>
+                        <span style="display:block;font-size:11px;color:#888;margin-top:4px;">Último pago acreditado</span>
+                    </div>
+                </div>
+                <!-- Período actual -->
+                <div style="background:rgba(255,255,255,0.03);border-radius:10px;padding:12px;margin-bottom:16px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                        <span style="color:#b0b0b0;font-size:12px;">Período actual:</span>
+                        <span id="referralCurrentPeriod" style="color:#fff;font-size:12px;font-weight:600;">—</span>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <span style="color:#b0b0b0;font-size:12px;">Próxima acreditación:</span>
+                        <span id="referralCreditDate" style="color:#888;font-size:11px;">—</span>
+                    </div>
+                </div>
+                <!-- Microcopy: cómo funcionan los referidos -->
+                <div style="background:rgba(212,175,55,0.04);border:1px solid rgba(212,175,55,0.15);border-radius:10px;padding:12px;margin-bottom:16px;">
+                    <p style="color:#b0b0b0;font-size:11px;margin:0;line-height:1.6;">
+                        💡 <strong style="color:#d4af37;">¿Cómo funciona?</strong> Las ganancias se calculan y acreditan al inicio de cada mes en base a la actividad del período anterior. Si un referido sigue generando movimiento después de un pago, el nuevo saldo se acredita en el siguiente corte.
+                    </p>
+                </div>
+                <!-- Historial agrupado por período -->
+                <div>
+                    <span style="color:#b0b0b0;font-size:12px;font-weight:600;display:block;margin-bottom:10px;text-transform:uppercase;letter-spacing:1px;">Historial de pagos</span>
+                    <div id="referralPayoutHistory" style="max-height:220px;overflow-y:auto;">
+                        <span style="color:#888;font-size:12px;">Cargando...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
